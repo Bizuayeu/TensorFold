@@ -523,8 +523,9 @@ class App:
                 from tensorfold.vision.qwen_processing import continued
 
                 same = list(ids) == list(prepared.vision.token_ids)
-                extra["vision"] = prepared.vision if same else continued(prepared.vision, ids,
-                                                                       self.vision.frontend.config)
+                extend = getattr(self.vision, "continued", None)          # GLM's frontend: no positions to extend
+                extra["vision"] = (prepared.vision if same else extend(prepared.vision, ids) if extend is not None
+                                   else continued(prepared.vision, ids, self.vision.frontend.config))
             if prompt_rows is not None and not cached:    # the first run reads the prompt; a later one resumes it
                 extra["prompt_logprobs"] = prompt_rows
             stats = self.engine.generate(ids, count, sampling, feed, **extra)

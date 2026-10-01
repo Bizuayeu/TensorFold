@@ -597,13 +597,16 @@ def stage(w: Weights, st: State, b: Buffers, tokens: Sequence[int]) -> int:
 
 
 def compute(w: Weights, st: State, b: Buffers, R: int, *, logits: bool = True, nch: int | None = None,
-            host_pos: int | None = None, sparse_np: int | None = None, cut: Cut | None = None):
+            host_pos: int | None = None, sparse_np: int | None = None, cut: Cut | None = None, images=None):
     """Run capturable GPU work on static buffers and device positions; eager long contexts use host_pos (graphs sparse_np) to select sparse attention."""
 
     if cut is not None and (not b.prefill or not 0 < cut.point < R):
         raise ValueError("a prompt cut must lie inside a prefill chunk")
     c = w.cfg
     glue.embed(b.ids[:R], w.embed, c.hidden, c.streams, b.x[:R])
+    # an image prompt's chunk: its placeholder rows take the tower's features, before any rank glues only its own rows
+    if images is not None:
+        images(b.x[:R], c.streams)
     if b.overlap is not None and sparse_np is None and b.overlap.begin(R):
         pieced_layers(w, st, b, R, nch, host_pos, cut)             # also the taps and b.hidden[:R]
     else:
