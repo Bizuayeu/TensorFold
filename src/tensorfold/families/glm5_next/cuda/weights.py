@@ -266,12 +266,12 @@ class Weights:
         return total
 
 
-def load(model_dir: str | Path, *, rank: int, device: str = "cuda", mtp: bool = True) -> Weights:
-    """One of two ranks from a checkpoint or rank folder, MTP included unless ``mtp`` is False, with its head half."""
+def load(model_dir: str | Path, *, rank: int, world: int = 2, device: str = "cuda", mtp: bool = True) -> Weights:
+    """Rank ``rank`` of ``world`` from a checkpoint or rank folder, MTP included unless ``mtp`` is False, with its
+    share of the head's vocabulary."""
 
     from .split import RankReader, ShardPlan
 
-    world = 2
     cfg = Config.read(model_dir)
     if cfg.quant not in ("mlx", "exl3", "nvfp4"):
         raise ValueError(f"GLM-5.3-Flash's CUDA engine reads MLX 4-bit, EXL3 or ModelOpt NVFP4 checkpoints, not "

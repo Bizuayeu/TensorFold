@@ -193,6 +193,18 @@ def rank_files(model_dir: str | Path, rank: int) -> list[Path]:
     return sorted(Path(model_dir).glob(f"*.rank{rank}.safetensors"))
 
 
+WORLD_KEY = "tensorfold_world"      # a rank file's header metadata: how many ranks its folder's split is for
+
+
+def split_world(files: list[Path]) -> int:
+    """How many ranks a rank folder's ``files`` were split for (folders written before the split marked it: two)."""
+
+    worlds = {int((read_header(path)[0].get("__metadata__") or {}).get(WORLD_KEY, 2)) for path in files}
+    if len(worlds) != 1:
+        raise ValueError(f"{files[0].parent} mixes files split for {sorted(worlds)} ranks")
+    return worlds.pop()
+
+
 class RankReader:
     """Read stored-dtype CPU tensors for one rank (``plan``) from the full checkpoint or its pre-split folder."""
 
@@ -200,12 +212,16 @@ class RankReader:
         from tensorfold.cuda.direct_read import ReadAhead, Reader, SafeTensors
 
         self.dir, self.plan, rank = Path(model_dir), plan, plan.rank
+        mine, shares = rank_files(self.dir, rank), sorted(self.dir.glob("*.rank*.safetensors"))
+        if shares and not mine:
+            held = sorted({int(p.name.rsplit(".rank", 1)[1].split(".")[0]) for p in shares})
+            raise ValueError(f"{self.dir} holds the share of rank {', '.join(map(str, held))}: give rank {rank} its "
+                             "own folder or the full checkpoint")
+        if mine and split_world(mine) != plan.world:
+            raise ValueError(f"{self.dir} was split for {split_world(mine)} ranks, not {plan.world}: split the "
+                             f"checkpoint again with --world {plan.world}")
         self.io = Reader()                                # O_DIRECT reads where the file system allows them
         self.reads = ReadAhead(self.io, READERS, RUN, GAP)
-        mine, other = rank_files(self.dir, rank), rank_files(self.dir, 1 - rank)
-        if other and not mine:
-            raise ValueError(f"{self.dir} holds rank {1 - rank}'s share: give rank {rank} its own folder or the "
-                             "full checkpoint")
         self.split = bool(mine)
         if self.split:
             self.folder = SafeTensors(mine, self.io)
@@ -333,29 +349,37 @@ def split_file(src: str | Path, out: str | Path, plan: ShardPlan) -> dict:
         part.append((name, info["dtype"], shape, data))
     os.makedirs(out, exist_ok=True)
     if part:
-        write(os.path.join(str(out), f"{stem}.rank{plan.rank}.safetensors"), part, metadata)
+        write(os.path.join(str(out), f"{stem}.rank{plan.rank}.safetensors"), part,
+              {**(metadata or {}), WORLD_KEY: str(plan.world)})
     return summary
 
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("model_dir", type=Path, help="the checkpoint (e.g. the snapshot `tensorfold pull` downloaded)")
-    p.add_argument("--rank", type=int, choices=(0, 1), required=True, help="the rank this machine serves")
-    p.add_argument("out", type=Path, help="the folder to write (then: tensorfold serve OUT --tp 2 --rank R ...)")
+    p.add_argument("--world", type=int, default=2, help="how many ranks serve the model (default 2)")
+    p.add_argument("--rank", type=int, required=True, help="the rank this machine serves, 0 to WORLD - 1")
+    p.add_argument("out", type=Path, help="the folder to write (then: tensorfold serve OUT --tp WORLD --rank R ...)")
     args = p.parse_args(argv)
+    if not 0 <= args.rank < args.world:
+        p.error(f"--rank {args.rank} is not a rank of --world {args.world}")
     files = sorted(args.model_dir.glob("model-*.safetensors"))
     if not files:
         raise SystemExit(f"{args.model_dir}: no model-*.safetensors files")
     from .weights import Config
 
-    plan = ShardPlan(Config.read(args.model_dir), 2, args.rank)
+    plan = ShardPlan(Config.read(args.model_dir), args.world, args.rank)
     args.out.mkdir(parents=True, exist_ok=True)
     for name in SMALL:
         if (args.model_dir / name).exists():
             shutil.copyfile(args.model_dir / name, args.out / name)
     for src in files:
         stem = src.name.replace(".safetensors", "")
-        if (args.out / f"{stem}.rank{args.rank}.safetensors").exists():
+        done = args.out / f"{stem}.rank{args.rank}.safetensors"
+        if done.exists():                                 # a file an earlier run wrote, if split alike
+            if split_world([done]) != args.world:
+                raise SystemExit(f"{done} was split for {split_world([done])} ranks, not {args.world}: write the "
+                                 "share to another folder")
             continue
         print(src.name, split_file(src, args.out, plan), flush=True)
     print(f"rank {args.rank}'s share of {len(files)} files in {args.out}", flush=True)

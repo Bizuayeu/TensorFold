@@ -115,12 +115,17 @@ ROUTED_EXPERT = re.compile(r"\.mlp\.experts\.\d+\.(gate|up|down)_proj\.weight$")
 
 
 def split_units(units: int, world: int, rank: int) -> tuple[int, int]:
-    """First and end unit of rank ``rank``'s share of ``units`` whole units (heads, blocks of a width) over ``world``."""
+    """First and end unit of rank ``rank``'s share of ``units`` whole units (heads, blocks of a width) over ``world``:
+    units // world a rank, one more for each of the first units % world ranks (two ranks of an even count: the
+    halves)."""
 
-    if world != 2 or units % 2:
-        raise ValueError(f"{units} units do not split in halves over {world} ranks")
-    half = units // 2
-    return rank * half, (rank + 1) * half
+    if not 0 <= rank < world:
+        raise ValueError(f"rank {rank} of {world}")
+    each, extra = divmod(units, world)
+    if not each:
+        raise ValueError(f"{units} units over {world} ranks leave a rank empty")
+    first = rank * each + min(rank, extra)
+    return first, first + each + (rank < extra)
 
 
 def _most(total: int, world: int, unit: int = 1) -> int:
