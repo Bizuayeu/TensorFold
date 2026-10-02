@@ -39,3 +39,31 @@ class LabelProbabilities(Probabilities):
     def add_labels(self, position: int, logits: list[float], logsumexp: float) -> None:
         if position == self.start:
             self.label_logits, self.logsumexp = logits, logsumexp
+
+
+class PromptProbabilities:
+    """A prompt's teacher-forced rows: position p (1 .. len - 1) holds prompt[p]'s log probability given prompt[:p],
+    its rank in the vocabulary and the ``top`` most likely (id, log probability)."""
+
+    def __init__(self, top: int, prompt):
+        self.top, self.prompt = top, [int(t) for t in prompt]
+        self.rows: dict[int, dict] = {}
+
+    def add(self, position: int, logprob: float, rank: int, top: list) -> None:
+        if not 1 <= position < len(self.prompt):
+            raise ValueError(f"prompt position {position} is outside the prompt")
+        if not all(math.isfinite(x) for x in (logprob, *(value for _, value in top))):
+            raise RuntimeError("prompt log probabilities are not finite")
+        row = {"id": self.prompt[position], "logprob": logprob, "rank": rank, "top": list(top)}
+        old = self.rows.get(position)
+        if old is not None and old != row:
+            raise RuntimeError("a replay changed the prompt log probabilities")
+        self.rows[position] = row
+
+    def emitted(self) -> list[dict]:
+        """Rows for positions 1 .. len - 1, in order; every one must be there."""
+
+        missing = [p for p in range(1, len(self.prompt)) if p not in self.rows]
+        if missing:
+            raise RuntimeError(f"prompt log probabilities are missing for {len(missing)} positions")
+        return [self.rows[p] for p in range(1, len(self.prompt))]

@@ -13,7 +13,7 @@ from tensorfold.cuda.sampling import comm_gather, nucleus_rows, one_rank
 from tensorfold.engine.exact_sampling import MARGIN, Sampling, choose_rows
 
 from . import glue, prof, qmm
-from .forward import Buffers, State, chunks_for, commit, compute, stage
+from .forward import Buffers, State, chunks_for, commit, compute, mm, stage
 from .mtp import mtp_compute, mtp_forward, mtp_stage
 from .sparse import pool_bucket
 from .weights import Weights
@@ -341,11 +341,14 @@ def restore(e: Engine, snap: Snapshot, drafter=None) -> None:
 # -- prefill ----------------------------------------------------------------------------------------------------
 @torch.no_grad()
 def prefill(e: Engine, prompt: Sequence[int], sampling: Sampling | None, *, mtp: bool = True, drafter=None,
-            resume: Snapshot | None = None, keep_at: int | None = None, keep=None) -> int:
-    """Commit the prompt in chunks and sample its first token; a resumed prompt ends in a fresh prefill's state."""
+            resume: Snapshot | None = None, keep_at: int | None = None, keep=None, prompt_logprobs=None) -> int:
+    """Commit the prompt in chunks and sample its first token; a resumed prompt ends in a fresh prefill's state.
+    ``prompt_logprobs`` (``PromptProbabilities``) collects every prompt token's teacher-forced row."""
 
     if not prompt:
         raise ValueError("prefill requires at least one token")
+    if prompt_logprobs is not None and resume is not None:
+        raise ValueError("prompt log probabilities need every prompt row: a resumed prefill skips its prefix")
     w, st, b = e.w, e.st, e.pbuf
     use_mtp = mtp and w.mtp is not None
     begin = 0
@@ -376,6 +379,8 @@ def prefill(e: Engine, prompt: Sequence[int], sampling: Sampling | None, *, mtp:
         point = keep_at - start if keep_at is not None else 0
         cut = Cut(point, torch.empty_like(st.rec[0]), st.conv.clone()) if 0 < point < R else None
         last = compute(w, st, b, stage(w, st, b, chunk), nch=chunks_for(st, R), host_pos=st.pos, cut=cut).clone()
+        if prompt_logprobs is not None:      # now: the MTP absorb below writes b.fnormed
+            _prompt_rows(e, b, prompt, start, R, prompt_logprobs)
         e.last_hidden = b.fnormed[R - 1:R].clone()
         if 0 < point <= R:
             rec = cut.rec if cut is not None else st.rec[st.cur[0] if st.cur else 0].clone()
@@ -407,6 +412,27 @@ def prefill(e: Engine, prompt: Sequence[int], sampling: Sampling | None, *, mtp:
     first = e.sample(last, [len(prompt)], sampling)[0]
     e.follow([first])
     return first
+
+
+def _prompt_rows(e: Engine, b: Buffers, prompt: Sequence[int], start: int, R: int, collector) -> None:
+    """A prompt chunk's rows that predict a prompt token, through the head in groups of rows (the prefill matmuls give
+    a row the same bits in any group, so the rows do not depend on the chunking), then ``logprobs.prompt_rows``."""
+
+    from tensorfold.cuda.logprobs import ENTRIES, prompt_rows
+
+    w = e.w
+    n = min(R, len(prompt) - 1 - start)          # the prompt's last row predicts the reply, not a prompt token
+    if n <= 0:
+        return
+    width = max(1, ENTRIES // w.head.n)          # bf16 logits of a group, never a chunk's [rows, vocab] in fp32
+    out = torch.empty((min(n, width), w.head.n), dtype=torch.bfloat16, device=b.fnormed.device)
+    gather = one_rank if w.comm is None else comm_gather(w.comm)
+    for r0 in range(0, n, width):
+        r1 = min(n, r0 + width)
+        logits = mm(b, b.fnormed[r0:r1], w.head, b.fxs[r0:r1], out[:r1 - r0])
+        targets = [int(t) for t in prompt[start + r0 + 1:start + r1 + 1]]
+        for i, (logprob, rank, top) in enumerate(prompt_rows(logits, targets, collector.top, gather)):
+            collector.add(start + r0 + i + 1, logprob, rank, top)
 
 
 def _absorb_rows(e: Engine, hidden: torch.Tensor, next_tokens: Sequence[int]) -> None:
