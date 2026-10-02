@@ -11,6 +11,7 @@ from tensorfold.cuda import experts as grouped
 COLS = 32                 # output columns a block
 WORDS = 144               # int32 a (32 columns, 32 inputs) block: 128 code words, then 16 of e4m3 scales
 PREFILL_TILE = 16         # this kernel's prompt item: 64 ran 1.53x slower on Flash Next's routed prompts
+PROMPT_TILE = 64          # ``experts_prompt.cu``'s item: 64 pairs x 128 columns staged through shared memory
 
 
 def _i32(v: torch.Tensor) -> torch.Tensor:
@@ -98,6 +99,33 @@ def down(act: torch.Tensor, ex: Experts4, plan: grouped.Plan, out: torch.Tensor,
 
     _run(0 if out.dtype == torch.float32 else 3, act, 0, ex.down, ex.down_scale, ex.width // 32, ex.dims // COLS,
          plan, out, ex.dims, 0.0, skip, rows)
+
+
+def _prompt(epi: int, x: torch.Tensor, slots: int, w: torch.Tensor, scale: torch.Tensor, kg: int, nb: int,
+            plan: grouped.Plan, out: torch.Tensor, n: int, limit: float, skip: int, rows: int) -> None:
+    from .linear import _ext
+
+    if not plan.prefill or plan.tile != PROMPT_TILE:
+        raise ValueError(f"the NVFP4 prompt kernel takes a prompt plan routed in items of {PROMPT_TILE} pairs")
+    items = grouped.max_items(rows * plan.slots, plan.experts, plan.tile)
+    _ext().experts_prompt(epi, x, x.stride(0), slots, w, scale, kg, nb, plan.items, plan.counts, plan.members, out, n,
+                          limit, skip, items)
+
+
+def prompt_gate_up(x: torch.Tensor, ex: Experts4, plan: grouped.Plan, out: torch.Tensor, rows: int,
+                   skip: int = -1) -> None:
+    """``gate_up`` for prompt rows: exact bf16 weights, one fp32 chain over K; bits chunk-invariant, not decode's."""
+
+    _prompt(2, x, plan.slots, ex.up, ex.up_scale, ex.dims // 32, ex.width // COLS, plan, out, ex.width, ex.limit, skip,
+            rows)
+
+
+def prompt_down(act: torch.Tensor, ex: Experts4, plan: grouped.Plan, out: torch.Tensor, rows: int,
+                skip: int = -1) -> None:
+    """``down`` for prompt rows, as ``prompt_gate_up``: fp32 or bf16 ``out``."""
+
+    _prompt(0 if out.dtype == torch.float32 else 3, act, 0, ex.down, ex.down_scale, ex.width // 32, ex.dims // COLS,
+            plan, out, ex.dims, 0.0, skip, rows)
 
 
 E2M1 = (0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0)

@@ -428,14 +428,16 @@ def moe_block(layer: LayerW, w: Weights, b: Buffers, R: int) -> torch.Tensor:
         glue.select(b.mlog[:R], m.bias, b.pick[:R], b.wts[:R], c.top_k, c.experts, c.routed_scale, c.norm_topk)
         if m.shared is None:
             grouped.route(b.pick[:R], b.plan)
-        elif nv:                         # a prompt plan's items as the NVFP4 kernel takes them
-            grouped.route(b.pick[:R], b.plan, nvx.PREFILL_TILE)
+        elif nv:                         # a prompt plan's items as the NVFP4 prompt kernel takes them
+            grouped.route(b.pick[:R], b.plan, nvx.PROMPT_TILE)
     if nv:
-        # NVFP4: the routed slots through the grouped NVFP4 kernel, the shared expert (last slot) through BF16 matmuls
+        # NVFP4: the routed slots through the grouped NVFP4 kernel (a prompt chunk's through its prompt form), the
+        # shared expert (last slot) through BF16 matmuls
+        gate_up, down = (nvx.prompt_gate_up, nvx.prompt_down) if b.plan.prefill else (nvx.gate_up, nvx.down)
         with prof.timed("moe: gate/up"):
-            nvx.gate_up(b.normed[:R], m.experts, b.plan, b.eact, R, skip=c.experts)
+            gate_up(b.normed[:R], m.experts, b.plan, b.eact, R, skip=c.experts)
         with prof.timed("moe: down"):
-            nvx.down(b.eact, m.experts, b.plan, b.ey.view(-1, c.hidden), R, skip=c.experts)
+            down(b.eact, m.experts, b.plan, b.ey.view(-1, c.hidden), R, skip=c.experts)
         with prof.timed("moe: shared"):
             shared_expert(m, w, b, R)
         with prof.timed("moe: combine"):
