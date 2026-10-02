@@ -210,17 +210,19 @@ def memory_fraction(ram_bytes: int) -> float | None:
 
 # the CUDA engine's kernels read MLX affine weights of this (bits, group size); EXL3 checkpoints are checked above
 CUDA_QUANTIZATION = (4, 64)
+CUDA_TP = (2, 3)                   # GPUs, one per machine (EXL3 and the DFlash2 drafter: two)
 
 
 def cuda_engine(model_dir: str | Path, *, drafter: str = "", tp: int = 1, rank: int = 0, master: str = "",
                 master_port: int = 29551, no_drafts: bool = False, mtp_drafts: int | None = None, **options: Any):
-    """Build the two-rank engine with adaptive drafting, reusable prompt state, or serial decoding when drafts are disabled."""
+    """Build the engine of ``tp`` ranks with adaptive drafting, reusable prompt state, or serial decoding when drafts are
+    disabled."""
 
-    if int(tp) != 2:
-        raise ValueError("GLM-5.3-Flash needs two GPUs, one per machine: run the same `tensorfold serve` command "
-                         "with --tp 2 --rank R --master ADDRESS on both (rank 1 first)")
+    if int(tp) not in CUDA_TP:
+        raise ValueError("GLM-5.3-Flash runs on two or three GPUs, one per machine: run the same `tensorfold serve` "
+                         "command with --tp 2 or 3 --rank R --master ADDRESS on each (rank 0 last)")
     if not master:
-        raise ValueError("--tp 2 needs --master: rank 0's address on the link between the two machines")
+        raise ValueError(f"--tp {tp} needs --master: rank 0's address on the link between the machines")
     from .cuda.engine import DEFAULT_POLICY, DFLASH_POLICY, GlmEngine
 
     if mtp_drafts is None:
@@ -232,7 +234,7 @@ def cuda_engine(model_dir: str | Path, *, drafter: str = "", tp: int = 1, rank: 
     return GlmEngine(Path(model_dir), rank=int(rank), master=master, port=int(master_port), policy=policy,
                      drafter=Path(drafter) if drafter and not no_drafts else None,
                      context=options.get("context"), context_explicit=options.get("context_explicit"),
-                     serial_only=bool(no_drafts))
+                     serial_only=bool(no_drafts), world=int(tp))
 
 
 def __getattr__(name: str) -> Any:

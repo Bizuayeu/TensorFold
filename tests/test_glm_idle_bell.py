@@ -1,4 +1,4 @@
-"""GLM's idle doorbell (engine._ring / _await_bell) on a real localhost TCPStore, the two ranks as threads (CPU)."""
+"""GLM's idle doorbell (engine._ring / _await_bell) on a real localhost TCPStore, the ranks as threads (CPU)."""
 
 from __future__ import annotations
 
@@ -22,16 +22,19 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-def _ranks():
+def _bind(r):
+    for name in ("_store", "_bell_key", "_ring", "_await_bell"):
+        setattr(r, name, getattr(GlmEngine, name).__get__(r))
+    return r
+
+
+def _ranks(world=2):
     port = _free_port()
-    master = TCPStore("127.0.0.1", port, 2, True, timeout=timedelta(seconds=30), wait_for_workers=False)
-    worker = TCPStore("127.0.0.1", port, 2, False, timeout=timedelta(seconds=30))
-    r0 = SimpleNamespace(comm=SimpleNamespace(store=master))
-    r1 = SimpleNamespace(comm=SimpleNamespace(store=worker))
-    for r in (r0, r1):
-        for name in ("_store", "_ring", "_await_bell"):
-            setattr(r, name, getattr(GlmEngine, name).__get__(r))
-    return master, r0, r1
+    master = TCPStore("127.0.0.1", port, world, True, timeout=timedelta(seconds=30), wait_for_workers=False)
+    stores = [master] + [TCPStore("127.0.0.1", port, world, False, timeout=timedelta(seconds=30))
+                         for _ in range(world - 1)]
+    return (master, *(_bind(SimpleNamespace(rank=r, world=world, comm=SimpleNamespace(store=s)))
+                      for r, s in enumerate(stores)))
 
 
 def test_rank1_blocks_until_rank0_rings_then_follows_every_request_in_order():
@@ -60,6 +63,36 @@ def test_rank1_blocks_until_rank0_rings_then_follows_every_request_in_order():
     assert master.num_keys() <= 2                       # consumed keys are deleted (the store's own key(s) remain)
 
 
+def test_each_of_two_followers_takes_every_bell():
+    """Three ranks: rank 0 rings each follower's own key, so neither deletes the bell the other still waits for."""
+
+    master, r0, r1, r2 = _ranks(3)
+    woke: dict[int, list[int]] = {1: [], 2: []}
+
+    def follower(r):
+        for _ in range(3):
+            r._await_bell()
+            woke[r.rank].append(r._bell)
+
+    threads = [threading.Thread(target=follower, args=(r,), daemon=True) for r in (r1, r2)]
+    for t in threads:
+        t.start()
+    for _ in range(3):
+        r0._ring()
+        time.sleep(0.1)
+    for t in threads:
+        t.join(10)
+    assert not any(t.is_alive() for t in threads), woke
+    assert woke == {1: [1, 2, 3], 2: [1, 2, 3]}
+    assert [r0._bell_key(r, 1) for r in (1, 2)] == ["tf_glm_request_1_1", "tf_glm_request_2_1"]
+    assert master.num_keys() <= 3                       # every consumed key is deleted
+
+
+def test_two_ranks_keep_their_bell_key():
+    _, r0, _ = _ranks(2)
+    assert r0._bell_key(1, 7) == "tf_glm_request_7"     # a rank 1 of an older build waits on this name
+
+
 def test_rings_before_rank1_waits_are_not_lost():
     _, r0, r1 = _ranks()
     r0._ring()
@@ -70,9 +103,7 @@ def test_rings_before_rank1_waits_are_not_lost():
 
 
 def test_no_store_means_no_doorbell():
-    r = SimpleNamespace(comm=SimpleNamespace())
-    for name in ("_store", "_ring", "_await_bell"):
-        setattr(r, name, getattr(GlmEngine, name).__get__(r))
+    r = _bind(SimpleNamespace(rank=1, world=2, comm=SimpleNamespace()))
     r._ring()
     r._await_bell()                                     # returns at once
     assert not hasattr(r, "_bell")
@@ -91,9 +122,7 @@ def test_idle_timeouts_are_retried_and_other_errors_raise():
             self.deleted.append(key)
 
     store = Store([RuntimeError("Socket Timeout"), RuntimeError("wait timeout after 3600000ms")])
-    r = SimpleNamespace(comm=SimpleNamespace(store=store))
-    for name in ("_store", "_ring", "_await_bell"):
-        setattr(r, name, getattr(GlmEngine, name).__get__(r))
+    r = _bind(SimpleNamespace(rank=1, world=2, comm=SimpleNamespace(store=store)))
     r._await_bell()                                     # two idle hours, then the request
     assert r._bell == 1 and store.deleted == ["tf_glm_request_1"]
     r.comm.store = Store([RuntimeError("Connection reset by peer")])
