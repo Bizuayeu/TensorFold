@@ -12,6 +12,7 @@ PROMPT_SHARE = 32       # a dense prompt chunk's arrays take at most this fracti
 PREFILL_ATT_ROWS = 256  # Flash Next's prompt attention block
 MLA_PROMPT_ATT_ROWS = 512   # GLM's prompt-chunk rows one dense latent attention call takes (forward.PROMPT_ATT_ROWS)
 MLA_SELECT_ROWS = 512       # GLM's prompt-chunk rows whose pool scores are held at once (sparse.SELECT_ROWS)
+MLA_B16_ROWS_FROM = 128     # GLM's windows from this many rows sum BF16 K slices in registers (qmm.B16_ROWS_FROM)
 
 
 def indexed_prefill_rows() -> int | None:
@@ -322,7 +323,8 @@ def mla_geometry(t: dict, world: int, reserve: int, *, minimum_slots: int = 2560
         fixed += (2 if mtp else 1) * exl3_expert_scratch(rows, slots, d, width)
         fixed += exl3_expert_scratch(PREFILL_ROWS, slots, d, width)
     if quant in ("exl3", "modelopt"):
-        fixed += 8 * PREFILL_ROWS * 16384 * 4          # the prompt's BF16 split-K partials (BF16 attention, shared expert)
+        # the BF16 split-K partials of prompt windows under MLA_B16_ROWS_FROM rows (BF16 attention, shared expert)
+        fixed += 8 * min(PREFILL_ROWS, MLA_B16_ROWS_FROM - 1) * 16384 * 4
     lw = int(t.get("kv_lora_rank", 512))
     mla_cache_bytes(t, world, 0, latent=latent, kv=kv)          # a bad format fails here
     def bytes_at(capacity: int) -> int:

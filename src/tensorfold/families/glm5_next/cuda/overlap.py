@@ -49,9 +49,7 @@ class Overlap:
 
     def __init__(self, w, b, pieces: int) -> None:
         self.w, self.b, self.pieces = w, b, pieces
-        self.stream = torch.cuda.Stream()
-        self.filled = [torch.cuda.Event() for _ in range(16)]
-        self.gathered = [torch.cuda.Event() for _ in range(16)]
+        self.stream = None                      # made with the events at the first pieced chunk
         self.active = False
         self.cut: list[tuple[int, int]] = []
 
@@ -61,6 +59,10 @@ class Overlap:
         self.cut = ranges(R, self.pieces)
         self.active = len(self.cut) > 1
         if self.active:
+            if self.stream is None:
+                self.stream = torch.cuda.Stream()
+                self.filled = [torch.cuda.Event() for _ in range(16)]
+                self.gathered = [torch.cuda.Event() for _ in range(16)]
             self.stream.wait_stream(torch.cuda.current_stream())
         return self.active
 
