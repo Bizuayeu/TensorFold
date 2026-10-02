@@ -8,6 +8,7 @@ import torch
 import triton
 import triton.language as tl
 
+from tensorfold.cuda.geometry import MLA_B16_ROWS_FROM
 from tensorfold.cuda.kernels import qmm as shared
 
 BN = 64                   # columns per stored tile
@@ -258,7 +259,7 @@ def _bmm_rows(X, W, OUT, M, x_stride, N: tl.constexpr, K: tl.constexpr, SK: tl.c
 # (warps, stages) for the BF16 matmul by row bucket: no choice changes bits
 B16_CONFIG = {16: (4, 3), 32: (4, 3), 64: (4, 2), 128: (8, 2)}
 # windows of this many rows or more (prompt chunks) take _bmm_rows: no partials, the same bits
-B16_ROWS_FROM = 128
+B16_ROWS_FROM = MLA_B16_ROWS_FROM
 # rows, columns, warps, stages, row-block group of a _bmm_rows program: speed only (every one gives the same bits);
 # the fastest of 18 on GB10 for 2,048 rows of GLM-5.3-Flash's per-rank shapes (records/.../prefill-2), else the default
 B16_ROWS_CONFIG = (128, 64, 8, 4, 8)
