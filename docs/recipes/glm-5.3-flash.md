@@ -102,6 +102,11 @@ chunk can see, rounded up to a power of two. Every kernel computes a row alone i
 position, so a decode window's rows keep the serial steps' bits; prompt chunks give the same bits for any
 chunking. The memory estimate sizes the latent cache (`mla_geometry(latent=True)`).
 
+A prompt chunk exchanges its rank partials in row pieces (`TF_GLM_PREFILL_OVERLAP`, default 1, and
+`TF_GLM_OVERLAP_PIECES`, default 4; both ranks the same, the startup comparison refuses a mismatch): each piece's
+all-gather runs on a second CUDA stream while the next pieces are computed, and each piece's hyper-connection glue
+waits for its own gather only. The kernels keep rows apart, so the bits are `TF_GLM_PREFILL_OVERLAP=0`'s.
+
 Measured on two DGX Sparks (GB10, 128 GB each) with the MLX 4-bit checkpoint, MTP drafts only,
 `--context 262144`, a synthetic codebase with one hidden fact, cold prompts:
 
