@@ -61,7 +61,7 @@ def test_prompt_logprobs_read_as_vllm_completions(tmp_path):
 
 @pytest.mark.parametrize("fields, chat, name", [
     ({"prompt": [1, 3]}, False, "0 to 2"), ({"prompt": [1, -1]}, False, "0 to 2"),
-    ({"prompt": [1, True]}, False, "0 to 2"), ({"prompt": [1, 1.0]}, False, "0 to 2"),
+    ({"prompt": [1, True]}, False, "integer token ids"), ({"prompt": [1, 1.0]}, False, "integer token ids"),
     ({"prompt": []}, False, "empty"), ({"prompt": 5}, False, "token ids"),
     ({"prompt": IDS, "prompt_logprobs": 21}, False, "prompt_logprobs"),
     ({"prompt": IDS, "prompt_logprobs": -1}, False, "prompt_logprobs"),
