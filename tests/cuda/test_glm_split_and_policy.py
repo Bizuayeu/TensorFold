@@ -15,22 +15,22 @@ from tensorfold.families.glm5_next.cuda.engine import _f64_ints, _ints_f64, deco
 from tensorfold.families.glm5_next.cuda.weights import Config
 
 L = "model.language_model."
-# the model whose units the split cuts between: 4 KDA heads, an expert width of two 64-wide blocks
+# the model whose units the split cuts between: 6 KDA heads, an expert width of six 64-wide blocks (two or three ranks)
 CONFIG = {"text_config": {
-    "hidden_size": 64, "num_hidden_layers": 4, "vocab_size": 16, "rms_norm_eps": 1e-5, "num_attention_heads": 4,
-    "q_lora_rank": 64, "kv_lora_rank": 64, "qk_nope_head_dim": 64, "v_head_dim": 64, "linear_num_heads": 4,
+    "hidden_size": 64, "num_hidden_layers": 4, "vocab_size": 16, "rms_norm_eps": 1e-5, "num_attention_heads": 6,
+    "q_lora_rank": 64, "kv_lora_rank": 64, "qk_nope_head_dim": 64, "v_head_dim": 64, "linear_num_heads": 6,
     "layer_types": ["linear_attention"] * 4, "n_routed_experts": 1, "num_experts_per_tok": 1,
-    "moe_intermediate_size": 128, "intermediate_size": 128, "routed_scaling_factor": 1.0, "eos_token_id": 0}}
+    "moe_intermediate_size": 384, "intermediate_size": 384, "routed_scaling_factor": 1.0, "eos_token_id": 0}}
 TENSORS = {           # name: (dtype, shape); the split rule each one takes is in the name
     L + "embed_tokens.weight": ("U32", [16, 8]),
     L + "embed_tokens.scales": ("BF16", [16, 1]),
     L + "norm.weight": ("BF16", [16]),
-    L + "layers.3.mlp.experts.0.gate_proj.weight": ("U32", [8, 8]),
-    L + "layers.3.mlp.experts.0.gate_proj.scales": ("BF16", [8, 2]),
-    L + "layers.3.mlp.experts.0.down_proj.weight": ("U32", [16, 4]),
-    L + "layers.3.mlp.experts.0.down_proj.scales": ("BF16", [16, 2]),
-    L + "layers.3.self_attn.A_log": ("F32", [4]),
-    L + "layers.3.self_attn.o_proj.weight": ("U32", [8, 4]),
+    L + "layers.3.mlp.experts.0.gate_proj.weight": ("U32", [12, 8]),
+    L + "layers.3.mlp.experts.0.gate_proj.scales": ("BF16", [12, 2]),
+    L + "layers.3.mlp.experts.0.down_proj.weight": ("U32", [16, 12]),
+    L + "layers.3.mlp.experts.0.down_proj.scales": ("BF16", [16, 6]),
+    L + "layers.3.self_attn.A_log": ("F32", [6]),
+    L + "layers.3.self_attn.o_proj.weight": ("U32", [8, 6]),
     "lm_head.weight": ("U32", [16, 8]),
     "model.visual.blocks.0.attn.qkv.weight": ("BF16", [4, 4]),
 }
@@ -53,8 +53,19 @@ def _checkpoint(tmp_path):
     return raw
 
 
-def _plan(path, rank: int) -> split.ShardPlan:
-    return split.ShardPlan(Config.read(path), 2, rank)
+def _plan(path, rank: int, world: int = 2) -> split.ShardPlan:
+    return split.ShardPlan(Config.read(path), world, rank)
+
+
+def _unmark(folder) -> None:
+    """Rewrite a rank folder's files as the split wrote them before it marked the rank count."""
+
+    for path in folder.glob("*.rank*.safetensors"):
+        header, base = split.read_header(path)
+        meta = {k: v for k, v in header.pop("__metadata__").items() if k != split.WORLD_KEY}
+        raw = np.fromfile(path, dtype=np.uint8)[base:]
+        split.write(str(path), [(n, i["dtype"], i["shape"], raw[slice(*i["data_offsets"])]) for n, i in header.items()],
+                    meta)
 
 
 def _whole(raw: np.ndarray, dtype: str, shape: list[int]) -> torch.Tensor:
@@ -105,6 +116,58 @@ def test_rank_shares_read_in_place_and_after_a_split_agree(tmp_path):
     r1.close()
     with pytest.raises(ValueError):
         split.RankReader(tmp_path / "rank0", _plan(tmp_path / "rank0", 1))      # rank 0's folder given to rank 1
+
+
+def test_three_rank_folders_hold_their_rank_count(tmp_path):
+    """Three ranks: each folder the split writes reads like the checkpoint in place, the parts rejoin to the tensor,
+    and a folder is refused by a rank of another rank count or another rank."""
+
+    raw = _checkpoint(tmp_path / "ckpt")
+    parts = {}
+    for rank in range(3):
+        out = tmp_path / f"of3-rank{rank}"
+        split.main([str(tmp_path / "ckpt"), "--world", "3", "--rank", str(rank), str(out)])
+        files = split.rank_files(out, rank)
+        assert files and all(split.read_header(f)[0]["__metadata__"][split.WORLD_KEY] == "3" for f in files)
+        plan = _plan(out, rank, 3)
+        full, folder = split.RankReader(tmp_path / "ckpt", plan), split.RankReader(out, plan)
+        for name, (dtype, shape) in TENSORS.items():
+            if KINDS[name] == "drop":
+                continue
+            a, b = full.get(name), folder.get(name)
+            assert a.dtype == b.dtype and a.shape == b.shape and a.numel(), name
+            assert torch.equal(a.view(torch.uint8), b.view(torch.uint8)), name
+            parts.setdefault(name, []).append(a.view(torch.uint8))
+        if rank < 2:
+            with pytest.raises(ValueError, match="split for 3 ranks"):
+                split.RankReader(out, _plan(out, rank))               # the same rank of two
+    for name, (dtype, shape) in TENSORS.items():
+        kind = KINDS[name]
+        if kind in ("drop", "rep"):
+            continue
+        joined = torch.cat(parts[name], dim=0 if kind == "row" else 1)
+        assert torch.equal(joined, _whole(raw[name], dtype, shape).view(torch.uint8)), name
+    with pytest.raises(ValueError, match="rank 0"):
+        split.RankReader(tmp_path / "of3-rank0", _plan(tmp_path / "of3-rank0", 2, 3))     # rank 0's folder, rank 2
+
+
+def test_folders_without_a_rank_count_are_two_rank_folders(tmp_path):
+    """Folders the split wrote before it marked the rank count are read as two ranks' and refused by three; a split
+    into a folder already holding another rank count's files stops instead of keeping them."""
+
+    _checkpoint(tmp_path / "ckpt")
+    out = tmp_path / "rank0"
+    split.main([str(tmp_path / "ckpt"), "--rank", "0", str(out)])
+    _unmark(out)
+    assert all(split.WORLD_KEY not in split.read_header(f)[0]["__metadata__"] for f in split.rank_files(out, 0))
+    name = L + "layers.3.self_attn.A_log"
+    assert split.RankReader(out, _plan(out, 0)).get(name).shape == (3,)
+    with pytest.raises(ValueError, match="split for 2 ranks"):
+        split.RankReader(out, _plan(out, 0, 3))
+    with pytest.raises(SystemExit, match="2 ranks"):
+        split.main([str(tmp_path / "ckpt"), "--world", "3", "--rank", "0", str(out)])
+    with pytest.raises(SystemExit):
+        split.main([str(tmp_path / "ckpt"), "--world", "3", "--rank", "3", str(tmp_path / "rank3")])
 
 
 def test_reads_ahead_in_runs_of_neighbouring_tensors(tmp_path, monkeypatch):
