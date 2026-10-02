@@ -36,14 +36,16 @@ PROMPT_TILE = 4             # ``prompt.cu``'s tile (128x128 on four 64x64 warps,
 
 
 def _prompt(mode: int, w: torch.Tensor, bs: torch.Tensor | None, scale: float, n: int, npad: int, x: torch.Tensor,
-            out: torch.Tensor | None = None) -> torch.Tensor:
-    """bf16 prompt rows (M, K) -> (M, n) bf16: exact weights, one fp32 chain over K; a row's bits never depend on M."""
+            out: torch.Tensor | None = None, f32: bool = False) -> torch.Tensor:
+    """bf16 prompt rows (M, K) -> (M, n) bf16 (fp32 sums unrounded with ``f32``): exact weights, one fp32 chain over K;
+    a row's bits never depend on M."""
 
     if x.dtype != torch.bfloat16 or x.stride(-1) != 1 or (x.shape[0] > 1 and x.stride(0) % 8) or x.data_ptr() % 16:
         x = x.to(torch.bfloat16).contiguous()
-    fits = out is not None and out.is_contiguous() and out.dtype == torch.bfloat16 and out.shape == (x.shape[0], n)
-    y = out if fits else torch.empty((x.shape[0], n), dtype=torch.bfloat16, device=x.device)
-    _prompt_ext().prompt16(x, w, bs, float(scale), y, mode, n, npad, PROMPT_TILE, False)
+    dtype = torch.float32 if f32 else torch.bfloat16
+    fits = out is not None and out.is_contiguous() and out.dtype == dtype and out.shape == (x.shape[0], n)
+    y = out if fits else torch.empty((x.shape[0], n), dtype=dtype, device=x.device)
+    _prompt_ext().prompt16(x, w, bs, float(scale), y, mode, n, npad, PROMPT_TILE, f32)
     if out is not None and y is not out:
         out.copy_(y)
     return y
@@ -163,21 +165,27 @@ class Fp4Linear:
         return Fp4Linear(self.words[t0:t1], self.bs[t0:t1], self.scale, min(self.n, 64 * t1) - 64 * t0, self.k,
                          act=self.act)
 
-    def __call__(self, x: torch.Tensor, out: torch.Tensor | None = None) -> torch.Tensor:
+    def __call__(self, x: torch.Tensor, out: torch.Tensor | None = None, f32: bool = False) -> torch.Tensor:
+        """``f32``: the fp32 sums unrounded (bf16 rows only, not the checkpoint math)."""
+
         if self.act is not None:
             from . import checkpoint
 
+            if f32:
+                raise ValueError("fp32 outputs are the bf16-row (W4A16) matmul's; the checkpoint math gives bf16")
             return checkpoint.matmul(checkpoint.A4, x, self, out)
-        return _matmul(FP4, self.words, self.bs, self.scale, self.n, self.k, self.npad, x, out)
+        return _matmul(FP4, self.words, self.bs, self.scale, self.n, self.k, self.npad, x, out, f32)
 
-    def prefill(self, x: torch.Tensor) -> torch.Tensor:
+    def prefill(self, x: torch.Tensor, out: torch.Tensor | None = None, f32: bool = False) -> torch.Tensor:
         """bf16 prompt rows on the exact prompt GEMM; under checkpoint math, NVFP4 rows on its prompt GEMM."""
 
         if self.act is not None:
             from . import checkpoint
 
+            if f32 or out is not None:
+                raise ValueError("the checkpoint math's prompt GEMM returns its own bf16 rows")
             return checkpoint.prompt(checkpoint.A4, x, self)
-        return _prompt(FP4, self.words, self.bs, self.scale, self.n, self.npad, x)
+        return _prompt(FP4, self.words, self.bs, self.scale, self.n, self.npad, x, out, f32)
 
     def prefill8(self, xq) -> torch.Tensor:
         """--prefill-fp8: e4m3 rows from the glue times the weight staged to e4m3 per (64 inputs, column) a call."""
@@ -464,21 +472,23 @@ FUSED_ROWS = int(__import__("os").environ.get("TF_QMMF_FUSED_ROWS", "256"))   # 
 
 
 def _matmul(mode: int, w: torch.Tensor, bs: torch.Tensor | None, scale: float, n: int, k: int, npad: int,
-            x: torch.Tensor, out: torch.Tensor | None) -> torch.Tensor:
-    """x (M, K) bf16 -> (M, n) bf16; K slices from the shape alone, so a row's bits never depend on M."""
+            x: torch.Tensor, out: torch.Tensor | None, f32: bool = False) -> torch.Tensor:
+    """x (M, K) bf16 -> (M, n) bf16 (fp32 sums unrounded with ``f32``); K slices from the shape alone, so a row's bits
+    never depend on M."""
 
     from tensorfold.cuda.kernels import qmm
 
     if x.dtype != torch.bfloat16 or x.stride(-1) != 1:
         x = x.to(torch.bfloat16).contiguous()
     m = x.shape[0]
-    y = out if out is not None and out.is_contiguous() and out.dtype == torch.bfloat16 else \
-        torch.empty((m, n), dtype=torch.bfloat16, device=x.device)
+    dtype = torch.float32 if f32 else torch.bfloat16
+    y = out if out is not None and out.is_contiguous() and out.dtype == dtype else \
+        torch.empty((m, n), dtype=dtype, device=x.device)
     sk = qmm.split_k(n, k)
     part = torch.empty((sk, m, n), dtype=torch.float32, device=x.device) if sk > 8 else None
     # prompt rows: each block sums its tile's slices itself (bm 0), the cluster's order without the cluster
     bm = 0 if sk > 1 and m >= FUSED_ROWS else qmm.bucket(m)
-    _ext().qmmf(x, w, bs, scale, y, part if bm else None, mode, n, sk, npad, bm, False)
+    _ext().qmmf(x, w, bs, scale, y, part if bm else None, mode, n, sk, npad, bm, f32)
     if out is not None and y is not out:
         out.copy_(y)
     return y

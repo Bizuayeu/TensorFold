@@ -15,8 +15,8 @@ KERNEL_PACKAGE = "tensorfold.kernels.glm.flash.v1"
 # the prompt experts' sorted gather (Flash Next's prompt matmuls), hashed into snapshot keys
 KERNEL_DEPENDENCIES = ("tensorfold.kernels.qwen.flash_next.v1.prefill_mm",)
 KERNEL_VERSION = "v1"
-# the storage formats each engine reads: MLX affine on a Mac; that or EXL3 routed experts on CUDA
-QUANT_METHODS = {"mlx": ("mlx",), "cuda": ("mlx", "exl3")}
+# the storage formats each engine reads: MLX affine on a Mac; that, EXL3 routed experts or ModelOpt NVFP4 on CUDA
+QUANT_METHODS = {"mlx": ("mlx",), "cuda": ("mlx", "exl3", "modelopt")}
 # the EXL3 variant the CUDA kernels read (4-bit trellis, the "mcg" codebook, routed experts only)
 EXL3_VARIANT = {"bits": 4, "codebook": "mcg", "scope": "glm53_routed_experts_only"}
 # buffers of 200 ops and 200 MB, so a prompt chunk's memory frees as it runs; no TF32: row kernels repeat fp32
@@ -30,7 +30,8 @@ def _mac_reads(fmt: tuple) -> bool:
 
 
 def check(model_dir: str | Path) -> None:
-    """Refuse what neither engine reads: MLX affine weights on a Mac; those or Mia's EXL3 layout on two GPUs."""
+    """Refuse what neither engine reads: MLX affine weights on a Mac; those, Mia's EXL3 layout or ModelOpt NVFP4 on
+    two GPUs."""
 
     import sys
 
@@ -53,6 +54,15 @@ def check(model_dir: str | Path) -> None:
                              + ", ".join(f"{k} {v}" for k, v in got.items()) + f". {OWN_MODEL_HELP}")
         print("[tensorfold] EXL3 support is experimental: replies are exact, but the MLX checkpoint "
               f"({MODELS[0]}) is tested more and runs faster (docs/recipes/glm-5.3-flash.md)", flush=True)
+    elif method == "modelopt":
+        # the CUDA engine's: NVFP4 routed experts and dense MLPs on bf16 rows, BF16 elsewhere
+        found = config.get("quantization_config") or {}
+        algo = str(found.get("quant_algo") or "")
+        if algo.upper() != "NVFP4" or sys.platform == "darwin":
+            where = "a Mac" if sys.platform == "darwin" else "CUDA"
+            raise ValueError("GLM-5.3-Flash reads ModelOpt NVFP4 checkpoints (nvidia/GLM-5.3-Flash-NVFP4's layout) "
+                             f"on its CUDA engine only; this one is ModelOpt {algo or 'without quant_algo'} on "
+                             f"{where}. {OWN_MODEL_HELP}")
     elif quantization(config) != (4, 64) and not (sys.platform == "darwin" and _mac_reads(quantization(config))):
         raise ValueError(f"GLM-5.3-Flash's Mac engine reads MLX affine weights of 2 to 8 bits in groups of 32, 64 or "
                          f"128 ({MODELS[0]} is 4-bit in groups of 64), and the CUDA engine 4-bit groups of 64 or "

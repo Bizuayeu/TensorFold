@@ -1,4 +1,4 @@
-"""Load one rank of MLX affine 4-bit weights or EXL3 routed experts with BF16 elsewhere, preserving heads and quantization groups at split boundaries."""
+"""Load one rank of MLX affine 4-bit weights, or EXL3 or ModelOpt NVFP4 routed experts with BF16 elsewhere, preserving heads and quantization groups at split boundaries."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ import torch
 from tensorfold.cuda import experts as grouped
 
 from tensorfold.cuda.exl3.experts import Exl3RoutedExperts as Exl3Experts
+from tensorfold.cuda.nvfp4 import experts as nvx
+from tensorfold.cuda.nvfp4.linear import Fp4Linear
 from . import latent
 from .qmm import B16, Q4, as_i32, make_b16, make_q4, quantize4, stack_b16, stack_q4
 
@@ -64,7 +66,9 @@ class Config:
     mtp_layers: int
     group_size: int
     bits: int
-    quant: str = "mlx"         # "mlx" (affine 4-bit everywhere) or "exl3" (EXL3 routed experts, BF16 elsewhere)
+    # "mlx" (affine 4-bit everywhere), "exl3" (EXL3 routed experts, BF16 elsewhere) or "nvfp4" (ModelOpt NVFP4 routed
+    # experts and dense MLPs, BF16 elsewhere)
+    quant: str = "mlx"
 
     @classmethod
     def read(cls, model_dir: str | Path) -> "Config":
@@ -84,6 +88,10 @@ class Config:
         dense = int(t.get("first_k_dense_replace", 3))
         mlp_kinds = list(t.get("mlp_layer_types") or ["dense"] * dense + ["sparse"] * (n - dense))
         mlp_kinds = ["moe" if k == "sparse" else "dense" for k in mlp_kinds]
+        method = str(quant.get("quant_method") or "mlx").lower()
+        if method == "modelopt":
+            algo = str(quant.get("quant_algo") or "").lower()
+            method = "nvfp4" if algo == "nvfp4" else f"modelopt {algo or 'without quant_algo'}"
         return cls(
             hidden=int(t["hidden_size"]), layers=n, vocab=int(t["vocab_size"]), eps=float(t["rms_norm_eps"]),
             heads=int(t["num_attention_heads"]), q_lora=int(t["q_lora_rank"]), kv_lora=int(t["kv_lora_rank"]),
@@ -102,7 +110,7 @@ class Config:
             index_topk=int(t.get("index_topk", 2048)), kpool=int(t.get("index_kpool", 4)),
             limit=float(t.get("swiglu_limit", 10.0)), kinds=kinds, mlp_kinds=mlp_kinds, eos=eos,
             mtp_layers=int(t.get("num_nextn_predict_layers", 0)), group_size=int(quant.get("group_size", 64)),
-            bits=bits_of(quant), quant=str(quant.get("quant_method") or "mlx").lower(),
+            bits=bits_of(quant), quant=method,
         )
 
     @property
@@ -172,8 +180,8 @@ class DSAW:
 
 @dataclass
 class MLPW:
-    gu: Q4                    # [gate | up]
-    down: Q4
+    gu: Q4 | B16 | tuple[Fp4Linear, Fp4Linear]   # [gate | up]; NVFP4: gate and up, each with its own tensor scale
+    down: Q4 | B16 | Fp4Linear
     width: int
 
 
@@ -181,8 +189,8 @@ class MLPW:
 class MoEW:
     router: torch.Tensor      # [E, D] bf16
     bias: torch.Tensor        # [E] fp32
-    experts: grouped.Experts | Exl3Experts  # 4-bit: E + 1 (shared expert last); EXL3: the E routed experts
-    shared: MLPW | None = None            # EXL3 checkpoints: the shared expert (BF16)
+    experts: grouped.Experts | Exl3Experts | nvx.Experts4  # 4-bit: E + 1 (shared expert last); else the E routed
+    shared: MLPW | None = None            # EXL3 and NVFP4 checkpoints: the shared expert (BF16)
 
 
 @dataclass
@@ -236,7 +244,8 @@ class Weights:
             if isinstance(t, torch.Tensor) and t.data_ptr() not in seen:
                 seen.add(t.data_ptr())
                 total += t.numel() * t.element_size()
-            elif isinstance(t, (Q4, B16, grouped.Experts, Exl3Experts, HCW, KDAW, DSAW, MLPW, MoEW, LayerW, MTPW, IndexW)):
+            elif isinstance(t, (Q4, B16, grouped.Experts, Exl3Experts, nvx.Experts4, Fp4Linear, HCW, KDAW, DSAW, MLPW,
+                                MoEW, LayerW, MTPW, IndexW)):
                 for v in vars(t).values():
                     add(v)
             elif isinstance(t, (list, tuple)):
@@ -262,9 +271,18 @@ def load(model_dir: str | Path, *, rank: int, device: str = "cuda", mtp: bool = 
 
     world = 2
     cfg = Config.read(model_dir)
-    if cfg.quant not in ("mlx", "exl3"):
-        raise ValueError(f"GLM-5.3-Flash's CUDA engine reads MLX 4-bit or EXL3 checkpoints, not {cfg.quant}")
-    exl3 = cfg.quant == "exl3"
+    if cfg.quant not in ("mlx", "exl3", "nvfp4"):
+        raise ValueError(f"GLM-5.3-Flash's CUDA engine reads MLX 4-bit, EXL3 or ModelOpt NVFP4 checkpoints, not "
+                         f"{cfg.quant}")
+    exl3, nvfp4 = cfg.quant == "exl3", cfg.quant == "nvfp4"
+    bf16 = exl3 or nvfp4                     # every weight but the routed experts (and NVFP4's dense MLPs) is BF16
+    if nvfp4:
+        from tensorfold.cuda import precision
+
+        # cc-defer: W4A16 only; GLM's own math (W4A4) waits for a grouped NVFP4 expert kernel that takes input scales
+        if precision.asked() and precision.mode() == precision.CHECKPOINT:
+            raise ValueError("--precision checkpoint: GLM-5.3-Flash's grouped NVFP4 experts take bf16 rows only (no "
+                             "path for the checkpoint's input scales); serve it with --precision full")
     dev = torch.device(device)
     rd = RankReader(model_dir, rank)
     HL = cfg.heads // world
@@ -280,10 +298,10 @@ def load(model_dir: str | Path, *, rank: int, device: str = "cuda", mtp: bool = 
         return (as_i32(t(name + ".weight")), t(name + ".scales"), t(name + ".biases"))
 
     def q4(name: str) -> Q4 | B16:
-        return make_b16(t(name + ".weight")) if exl3 else make_q4(*trip(name))
+        return make_b16(t(name + ".weight")) if bf16 else make_q4(*trip(name))
 
     def stack(names: list[str]) -> Q4 | B16:
-        if exl3:
+        if bf16:
             return stack_b16([t(n + ".weight") for n in names])
         return stack_q4([trip(n) for n in names])
 
@@ -303,7 +321,7 @@ def load(model_dir: str | Path, *, rank: int, device: str = "cuda", mtp: bool = 
         proj = stack([p + "q_a_proj", p + "kv_a_proj_with_mqa"])
         rows = torch.arange(HL * 512, device=dev).view(HL, 512)
         krows, vrows = rows[:, :cfg.qk_dim].reshape(-1), rows[:, cfg.qk_dim:].reshape(-1)
-        if exl3:
+        if bf16:
             w = t(p + "kv_b_proj.weight")
             kv_k, kv_v = make_b16(w[krows]), make_b16(w[vrows])
             full_k, full_v = (lambda: w[krows].float()), (lambda: w[vrows].float())
@@ -313,7 +331,7 @@ def load(model_dir: str | Path, *, rank: int, device: str = "cuda", mtp: bool = 
             kv_v = make_q4(w[vrows], s[vrows], b[vrows])
         if not latent.ENABLED:
             absorb = None
-        elif exl3:
+        elif bf16:
             absorb = latent.AbsorbW.from_rows(full_k(), full_v(), HL)
         elif cfg.group_size == 64:        # the checkpoint's own 4-bit rows, read as they are stored
             absorb = latent.AbsorbQ4((w[krows], s[krows], b[krows]), (w[vrows], s[vrows], b[vrows]), HL)
@@ -327,9 +345,23 @@ def load(model_dir: str | Path, *, rank: int, device: str = "cuda", mtp: bool = 
         return DSAW(proj, t(p + "q_a_layernorm.weight"), t(p + "kv_a_layernorm.weight"), q4(p + "q_b_proj"),
                     kv_k, kv_v, q4(p + "o_proj"), HL, ix, absorb)
 
+    def fp4(name: str) -> Fp4Linear:
+        """A ModelOpt NVFP4 projection as stored: codes, e4m3 scales and the fp32 weight scale (W4A16)."""
+
+        return Fp4Linear.from_checkpoint(t(name + ".weight"), t(name + ".weight_scale"),
+                                         float(rd.get(PREFIX + name + ".weight_scale_2")))
+
     def mlp(p: str) -> MLPW:
+        if nvfp4 and PREFIX + p + "gate_proj.weight_scale" in rd.index:     # the dense MLP (the shared expert: BF16)
+            gate, up = fp4(p + "gate_proj"), fp4(p + "up_proj")
+            return MLPW((gate, up), fp4(p + "down_proj"), gate.n)
         gu = stack([p + "gate_proj", p + "up_proj"])
         return MLPW(gu, q4(p + "down_proj"), gu.n // 2)
+
+    def nvfp4_experts(i: int) -> bool:
+        """Whether layer ``i``'s routed experts are stored NVFP4 (the MTP layer's are BF16)."""
+
+        return PREFIX + f"layers.{i}.mlp.experts.0.gate_proj.weight_scale" in rd.index
 
     def expert_names(i: int) -> list[str]:
         """Layer ``i``'s expert tensors in the order ``moe`` reads them (none for a dense layer; ``cfg.layers``: MTP)."""
@@ -337,11 +369,15 @@ def load(model_dir: str | Path, *, rank: int, device: str = "cuda", mtp: bool = 
         mtp_layer = i == cfg.layers and cfg.mtp_layers and mtp
         if not mtp_layer and (i >= cfg.layers or cfg.mlp_kinds[i] != "moe"):
             return []
-        p, parts = PREFIX + f"layers.{i}.mlp.", ("trellis", "suh", "svh") if exl3 else ("weight", "scales", "biases")
+        if nvfp4 and not nvfp4_experts(i):
+            return []                             # BF16 experts: read a projection at a time as they are packed
+        p = PREFIX + f"layers.{i}.mlp."
+        parts = (("trellis", "suh", "svh") if exl3 else ("weight", "weight_scale", "weight_scale_2") if nvfp4
+                 else ("weight", "scales", "biases"))
         names = []
         for proj in ("gate_proj", "up_proj", "down_proj"):
             names += [p + f"experts.{e}.{proj}.{x}" for e in range(cfg.experts) for x in parts]
-            if not exl3:
+            if not bf16:
                 names += [p + f"shared_experts.{proj}.{x}" for x in parts]
         return names
 
@@ -370,12 +406,35 @@ def load(model_dir: str | Path, *, rank: int, device: str = "cuda", mtp: bool = 
             "mcg", device=dev)
         return gate
 
+    def moe_nvfp4(i: int) -> nvx.Experts4:
+        """Layer ``i``'s routed experts as ``Experts4`` blocks: the stored NVFP4 bytes, or BF16 ones (the MTP layer's)
+        packed by ModelOpt's recipe a projection at a time; those only draft, so replies never depend on them."""
+
+        p = PREFIX + f"layers.{i}.mlp.experts."
+
+        def stacked(proj: str, x: str) -> torch.Tensor:
+            return on_device([rd.get(p + f"{e}.{proj}.{x}") for e in range(cfg.experts)])
+
+        parts = []
+        for proj in ("gate_proj", "up_proj", "down_proj"):
+            if nvfp4_experts(i):
+                parts.append(tuple(stacked(proj, x) for x in ("weight", "weight_scale", "weight_scale_2")))
+            else:
+                w = stacked(proj, "weight")
+                parts.append(nvx.quantize(w))
+                del w
+        ex = nvx.make(*parts, limit=cfg.limit)
+        del parts
+        return ex
+
     def moe(i: int) -> MoEW:
         p = f"layers.{i}.mlp."
         router = t(p + "gate.weight", torch.bfloat16).contiguous()
         bias = t(p + "gate.e_score_correction_bias", torch.float32).contiguous()
         if exl3:
             return MoEW(router, bias, moe_exl3(p), mlp(p + "shared_experts."))
+        if nvfp4:
+            return MoEW(router, bias, moe_nvfp4(i), mlp(p + "shared_experts."))
         parts = {}
         for proj in ("gate_proj", "up_proj", "down_proj"):
             ws, ss, bs = [], [], []
@@ -399,7 +458,7 @@ def load(model_dir: str | Path, *, rank: int, device: str = "cuda", mtp: bool = 
         mk = "moe" if plain else cfg.mlp_kinds[i]
         if len(layer_events) >= 2:                       # at most two layers queued ahead of the GPU
             layer_events.pop(0).synchronize()
-        up = None if exl3 else dev                       # MLX experts come uploaded (EXL3's are unpacked on the host)
+        up = None if exl3 else dev                       # MLX and NVFP4 experts come uploaded (EXL3 unpacks on the host)
         rd.prefetch(expert_names(i), up)                 # already queued, except for the first layer
         rd.prefetch(expert_names(i + 1), up)             # two layers in flight: reads overlap copies and packing
         lw = LayerW(i, kind, None if plain else hc(i, "attn"), None if plain else hc(i, "ffn"),
@@ -417,7 +476,7 @@ def load(model_dir: str | Path, *, rank: int, device: str = "cuda", mtp: bool = 
         layer_events.append(torch.cuda.current_stream().record_event())
         return lw
 
-    if exl3:
+    if bf16:
         embed = rd.get(PREFIX + "embed_tokens.weight").to(torch.bfloat16).contiguous().to(dev)
     else:
         embed = (as_i32(rd.get(PREFIX + "embed_tokens.weight")).to(dev), rd.get(PREFIX + "embed_tokens.scales").to(dev),
@@ -427,7 +486,7 @@ def load(model_dir: str | Path, *, rank: int, device: str = "cuda", mtp: bool = 
         built = [layer(i) for i in which]
         vl = cfg.vocab // world
         draft_head = None
-        if exl3:
+        if bf16:
             head = make_b16(rd.get("lm_head.weight")[rank * vl:(rank + 1) * vl].to(dev))
             # Draft steps use the quantized head; verification keeps the original head.
             draft_head = quantize4(head.weight)

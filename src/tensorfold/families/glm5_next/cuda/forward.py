@@ -14,6 +14,8 @@ from tensorfold.cuda import experts as grouped
 from tensorfold.cuda.exl3.experts import Scratch as Exl3Scratch
 from tensorfold.cuda.geometry import MLA_PROMPT_ATT_ROWS as PROMPT_ATT_ROWS   # a dense latent call's prompt rows
 from tensorfold.cuda.kernels import prefill_attention, qmm as shared
+from tensorfold.cuda.nvfp4 import experts as nvx
+from tensorfold.cuda.nvfp4.linear import Fp4Linear
 
 from . import KV_KINDS, exl3_generic, glue, kda as kda_mod, kv8, latent, prof, qmm, sparse
 from .attention import AttnScratch, attention, kv_write
@@ -99,14 +101,16 @@ class Buffers:
         self.wts = torch.empty((rows, slots), dtype=f32, device=dev)
         self.eact = torch.empty((rows * slots, ml), dtype=bf, device=dev)
         exl3 = c.quant == "exl3"
+        bf16 = exl3 or c.quant == "nvfp4"       # BF16 projections (the shared expert's too) besides the routed experts
         self.ey = None if exl3 else torch.empty((rows, slots, D), dtype=bf if prefill else f32, device=dev)
         self.plan = None if exl3 else grouped.Plan(rows, slots, c.experts + 1, dev, prefill=prefill)
         self.exl3 = None
-        if c.quant == "exl3":            # EXL3 routed experts, and the shared expert as a BF16 MLP
-            sl = c.shared_width // w.world
+        if exl3:                         # EXL3 routed experts
             shape = SimpleNamespace(dims=D, width=ml, count=c.experts)
             self.exl3 = Exl3Scratch(shape, rows, slots, device=dev)
             self.ey = self.exl3.y.view(rows, slots, D)
+        if bf16:                         # the shared expert as a BF16 MLP
+            sl = c.shared_width // w.world
             self.sgu = torch.empty((rows, 2 * sl), dtype=bf, device=dev)
             self.sact = torch.empty((rows, sl), dtype=bf, device=dev)
             self.sxs = torch.empty((rows, sl // 64), dtype=f32, device=dev)
@@ -114,7 +118,7 @@ class Buffers:
         # rank partials
         self.part = torch.empty((rows, D), dtype=f32, device=dev)
         self.gath = torch.empty((w.world * rows * D,), dtype=f32, device=dev)
-        self.sk = torch.empty((1 if prefill and not exl3 else 8 * rows * 16384,), dtype=f32, device=dev)
+        self.sk = torch.empty((1 if prefill and not bf16 else 8 * rows * 16384,), dtype=f32, device=dev)
         # final
         self.hidden = torch.empty((rows, D), dtype=bf, device=dev)
         self.fnormed = torch.empty((rows, D), dtype=bf, device=dev)
@@ -254,8 +258,11 @@ def gather(w: Weights, b: Buffers, R: int) -> torch.Tensor:
 
 
 def mm(b: Buffers, x: torch.Tensor, q, xs: torch.Tensor | None, out: torch.Tensor, f32: bool = False) -> torch.Tensor:
-    """A projection: 4-bit ones of a prompt chunk on the shared prefill matmul, the rest on ``qmm.matmul``."""
+    """A projection: 4-bit ones of a prompt chunk on the shared prefill matmul, NVFP4 ones on their exact prompt GEMM
+    or lane matmul, the rest on ``qmm.matmul``."""
 
+    if isinstance(q, Fp4Linear):
+        return q.prefill(x, out=out, f32=f32) if b.prefill else q(x, out=out, f32=f32)
     if b.prefill and isinstance(q, qmm.Q4):
         return shared.prefill_matmul(x, q, f32=f32, out=out)
     return qmm.matmul(x, q, xs, out=out, f32=f32, part=b.sk)
@@ -393,27 +400,52 @@ def _dsa_latent(a, w: Weights, lc: torch.Tensor, pos_dev: torch.Tensor, b: Buffe
 
 def mlp_block(layer: LayerW, w: Weights, b: Buffers, R: int) -> torch.Tensor:
     m = layer.mlp
-    mm(b, b.normed[:R], m.gu, b.xs[:R], b.gu[:R])
+    if isinstance(m.gu, tuple):          # NVFP4: gate and up, each with its own tensor scale
+        for j, part in enumerate(m.gu):
+            mm(b, b.normed[:R], part, None, b.gu[:R, j * m.width:(j + 1) * m.width])
+    else:
+        mm(b, b.normed[:R], m.gu, b.xs[:R], b.gu[:R])
     glue.swiglu(b.gu[:R], b.act[:R], b.xs_act[:R], w.cfg.limit)
     return out_proj(w, b, b.act[:R], m.down, b.xs_act[:R], R)
+
+
+def shared_expert(m, w: Weights, b: Buffers, R: int) -> None:
+    """The BF16 shared expert (EXL3 and NVFP4 checkpoints) into each row's last slot."""
+
+    c, s = w.cfg, m.shared
+    mm(b, b.normed[:R], s.gu, b.xs[:R], b.sgu[:R])
+    glue.swiglu(b.sgu[:R], b.sact[:R], b.sxs[:R], c.limit)
+    mm(b, b.sact[:R], s.down, b.sxs[:R], b.sy[:R], f32=True)
+    b.ey[:R, c.top_k].copy_(b.sy[:R])
 
 
 def moe_block(layer: LayerW, w: Weights, b: Buffers, R: int) -> torch.Tensor:
     c = w.cfg
     m = layer.moe
+    nv = isinstance(m.experts, nvx.Experts4)
     with prof.timed("moe: route"):
         glue.router(b.normed[:R], m.router, b.mlog[:R])
         glue.select(b.mlog[:R], m.bias, b.pick[:R], b.wts[:R], c.top_k, c.experts, c.routed_scale, c.norm_topk)
         if m.shared is None:
             grouped.route(b.pick[:R], b.plan)
+        elif nv:                         # a prompt plan's items as the NVFP4 kernel takes them
+            grouped.route(b.pick[:R], b.plan, nvx.PREFILL_TILE)
+    if nv:
+        # NVFP4: the routed slots through the grouped NVFP4 kernel, the shared expert (last slot) through BF16 matmuls
+        with prof.timed("moe: gate/up"):
+            nvx.gate_up(b.normed[:R], m.experts, b.plan, b.eact, R, skip=c.experts)
+        with prof.timed("moe: down"):
+            nvx.down(b.eact, m.experts, b.plan, b.ey.view(-1, c.hidden), R, skip=c.experts)
+        with prof.timed("moe: shared"):
+            shared_expert(m, w, b, R)
+        with prof.timed("moe: combine"):
+            glue.combine(b.ey[:R], b.wts[:R], b.part[:R])
+        with prof.timed("moe: all-gather"):
+            return gather(w, b, R)
     if m.shared is not None:
         # EXL3: the routed slots through the trellis kernels, the shared expert (last slot) through BF16 matmuls
         exl3_generic.routed(b.normed[:R], b.pick, m.experts, b.exl3, R, c.limit)
-        s = m.shared
-        mm(b, b.normed[:R], s.gu, b.xs[:R], b.sgu[:R])
-        glue.swiglu(b.sgu[:R], b.sact[:R], b.sxs[:R], c.limit)
-        mm(b, b.sact[:R], s.down, b.sxs[:R], b.sy[:R], f32=True)
-        b.ey[:R, c.top_k].copy_(b.sy[:R])
+        shared_expert(m, w, b, R)
         glue.combine(b.ey[:R], b.wts[:R], b.part[:R])
         return gather(w, b, R)
     with prof.timed("moe: gate/up"):
