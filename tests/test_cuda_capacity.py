@@ -44,7 +44,7 @@ def test_glm_nonfit_refuses_before_weight_load(tmp_path, monkeypatch):
     from tensorfold.families.glm5_next.cuda import engine
     import sys
 
-    glm = SimpleNamespace(dense_limit=2051, mtp_layers=1, layers=4)
+    glm = SimpleNamespace(dense_limit=2051, mtp_layers=1, layers=4, moe_width=1024)     # the split reads the width
     weights = SimpleNamespace(Config=SimpleNamespace(read=lambda *a: glm), load=None)
     monkeypatch.setitem(sys.modules, "tensorfold.families.glm5_next.cuda.weights", weights)
     monkeypatch.setitem(sys.modules, "tensorfold.families.glm5_next.cuda.decode", SimpleNamespace(Engine=None))
@@ -140,7 +140,7 @@ def fake_runtime(monkeypatch):
         prefix = f"tensorfold.families.{family}.cuda"
         weights = SimpleNamespace(load=load, draft_token_ids=lambda *a: None,
                                   Config=SimpleNamespace(read=lambda *a: SimpleNamespace(dense_limit=2051, mtp_layers=1,
-                                                                                         layers=4)))
+                                                                                         layers=4, vocab=1024)))
         monkeypatch.setitem(sys.modules, prefix + ".weights", weights)
         monkeypatch.setitem(sys.modules, prefix + ".decode", SimpleNamespace(Engine=None))
     import torch.distributed as dist
@@ -288,7 +288,7 @@ def test_loading_peak_is_separate_from_serving_peak():
 def test_actual_distributed_startup_agrees_on_smaller_rank_before_loading(tmp_path, monkeypatch, fake_runtime,
                                                                         family, explicit):
     from tensorfold.cuda.geometry import gdn_geometry, mla_geometry, linear_weights, indexed_weights, split_weights
-    from tensorfold.families.glm5_next.cuda.split import rule
+    from tensorfold.families.glm5_next.cuda.split import ShardPlan, rule
     from tensorfold.families.glm5_next.cuda.engine import GlmEngine
 
     checkpoint(tmp_path, small_config(), HEAD)
@@ -296,7 +296,8 @@ def test_actual_distributed_startup_agrees_on_smaller_rank_before_loading(tmp_pa
     geom = (mla_geometry(small_config(), 2, 8, latent=LATENT) if family == "mla" else
             gdn_geometry(small_config(), 2, 1, indexed=True, kept=5) if family == "indexed" else
             gdn_geometry(small_config(), 2, 12, rows=12, prompt=4096))     # the 27B engine's, prompt chunks on a GB10
-    transform = split_weights(rule) if family == "mla" else indexed_weights(2, False) if family == "indexed" else linear_weights
+    plan = ShardPlan(SimpleNamespace(vocab=1024), 2, 0)                  # small_config's vocabulary, the head's rows
+    transform = split_weights(rule, plan) if family == "mla" else indexed_weights(2, False) if family == "indexed" else linear_weights
     weights = capacity.estimate_weights(tmp_path, transform)
     if family == "linear":
         weights = capacity.Weights(weights.resident, weights.staging + weights.resident)

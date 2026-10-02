@@ -304,7 +304,7 @@ def test_estimate_counts_what_the_weights_hold(path, engine):
     from tensorfold.cuda.capacity import headers
     from tensorfold.cuda.geometry import split_weights
 
-    transform = split_weights(split.rule)
+    transform = split_weights(split.rule, engine.w.plan)
     estimate = sum(transform(name, info)[0] for name, info in headers(path).items())
     assert engine.w.mtp is not None
     assert estimate == engine.w.nbytes()

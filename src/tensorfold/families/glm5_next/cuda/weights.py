@@ -16,6 +16,7 @@ from tensorfold.cuda.nvfp4 import experts as nvx
 from tensorfold.cuda.nvfp4.linear import Fp4Linear
 from . import latent
 from .qmm import B16, Q4, as_i32, make_b16, make_q4, quantize4, stack_b16, stack_q4
+from .split import UNIT
 
 PREFIX = "model.language_model."
 
@@ -227,13 +228,14 @@ class Weights:
     rank: int
     world: int
     device: torch.device
+    plan: Any                         # split.ShardPlan: this rank's heads, widths and vocabulary
     comm: Any = None
     meta: dict = field(default_factory=dict)
     draft_head: Q4 | None = None      # BF16 heads: a 4-bit copy the draft steps read (drafts only propose)
 
     @property
     def vocab_offset(self) -> int:
-        return self.rank * (self.cfg.vocab // self.world)
+        return self.plan.span(self.cfg.vocab, UNIT)[0]
 
     def nbytes(self) -> int:
         total = 0
@@ -267,7 +269,7 @@ class Weights:
 def load(model_dir: str | Path, *, rank: int, device: str = "cuda", mtp: bool = True) -> Weights:
     """One of two ranks from a checkpoint or rank folder, MTP included unless ``mtp`` is False, with its head half."""
 
-    from .split import RankReader
+    from .split import RankReader, ShardPlan
 
     world = 2
     cfg = Config.read(model_dir)
@@ -284,9 +286,10 @@ def load(model_dir: str | Path, *, rank: int, device: str = "cuda", mtp: bool = 
             raise ValueError("--precision checkpoint: GLM-5.3-Flash's grouped NVFP4 experts take bf16 rows only (no "
                              "path for the checkpoint's input scales); serve it with --precision full")
     dev = torch.device(device)
-    rd = RankReader(model_dir, rank)
-    HL = cfg.heads // world
-    LL = cfg.lin_heads // world
+    plan = ShardPlan(cfg, world, rank)
+    rd = RankReader(model_dir, plan)
+    HL = plan.count(cfg.heads)
+    LL = plan.count(cfg.lin_heads)
 
     def t(name: str, dtype: torch.dtype | None = None) -> torch.Tensor:
         x = rd.get(PREFIX + name)
@@ -486,22 +489,21 @@ def load(model_dir: str | Path, *, rank: int, device: str = "cuda", mtp: bool = 
     try:                                          # a failed load still cancels the reads queued ahead
         which = list(range(cfg.layers))
         built = [layer(i) for i in which]
-        vl = cfg.vocab // world
+        lo, hi = plan.span(cfg.vocab, UNIT)
         draft_head = None
         if bf16:
-            head = make_b16(rd.get("lm_head.weight")[rank * vl:(rank + 1) * vl].to(dev))
+            head = make_b16(rd.get("lm_head.weight")[lo:hi].to(dev))
             # Draft steps use the quantized head; verification keeps the original head.
             draft_head = quantize4(head.weight)
         else:
             hw, hs, hb = (rd.get("lm_head." + x) for x in ("weight", "scales", "biases"))
-            head = make_q4(as_i32(hw[rank * vl:(rank + 1) * vl]).to(dev), hs[rank * vl:(rank + 1) * vl].to(dev),
-                           hb[rank * vl:(rank + 1) * vl].to(dev))
+            head = make_q4(as_i32(hw[lo:hi]).to(dev), hs[lo:hi].to(dev), hb[lo:hi].to(dev))
         mtpw = None
         if cfg.mtp_layers and mtp:
             i = cfg.layers
             mtpw = MTPW(t(f"layers.{i}.enorm.weight"), t(f"layers.{i}.hnorm.weight"), q4(f"layers.{i}.eh_proj"),
                         t(f"layers.{i}.shared_head.norm.weight"), layer(i, plain=True))
-        w = Weights(cfg, embed, built, t("norm.weight"), head, mtpw, rank, world, dev, draft_head=draft_head)
+        w = Weights(cfg, embed, built, t("norm.weight"), head, mtpw, rank, world, dev, plan, draft_head=draft_head)
         w.meta.update(layers=which)
     finally:
         rd.close()

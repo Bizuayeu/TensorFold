@@ -12,8 +12,15 @@ import torch
 
 from tensorfold.families.glm5_next.cuda import split
 from tensorfold.families.glm5_next.cuda.engine import _f64_ints, _ints_f64, decode_policy, encode_policy
+from tensorfold.families.glm5_next.cuda.weights import Config
 
 L = "model.language_model."
+# the model whose units the split cuts between: 4 KDA heads, an expert width of two 64-wide blocks
+CONFIG = {"text_config": {
+    "hidden_size": 64, "num_hidden_layers": 4, "vocab_size": 16, "rms_norm_eps": 1e-5, "num_attention_heads": 4,
+    "q_lora_rank": 64, "kv_lora_rank": 64, "qk_nope_head_dim": 64, "v_head_dim": 64, "linear_num_heads": 4,
+    "layer_types": ["linear_attention"] * 4, "n_routed_experts": 1, "num_experts_per_tok": 1,
+    "moe_intermediate_size": 128, "intermediate_size": 128, "routed_scaling_factor": 1.0, "eos_token_id": 0}}
 TENSORS = {           # name: (dtype, shape); the split rule each one takes is in the name
     L + "embed_tokens.weight": ("U32", [16, 8]),
     L + "embed_tokens.scales": ("BF16", [16, 1]),
@@ -42,8 +49,12 @@ def _checkpoint(tmp_path):
         split.write(str(tmp_path / file), [(n, TENSORS[n][0], TENSORS[n][1], raw[n]) for n in part], {"format": "mlx"})
         weight_map.update({n: file for n in part})
     (tmp_path / "model.safetensors.index.json").write_text(json.dumps({"weight_map": weight_map}))
-    (tmp_path / "config.json").write_text("{}")
+    (tmp_path / "config.json").write_text(json.dumps(CONFIG))
     return raw
+
+
+def _plan(path, rank: int) -> split.ShardPlan:
+    return split.ShardPlan(Config.read(path), 2, rank)
 
 
 def _whole(raw: np.ndarray, dtype: str, shape: list[int]) -> torch.Tensor:
@@ -66,7 +77,8 @@ def test_rank_shares_read_in_place_and_after_a_split_agree(tmp_path):
         out = tmp_path / f"rank{rank}"
         split.main([str(tmp_path / "ckpt"), "--rank", str(rank), str(out)])
         assert (out / "config.json").exists() and split.rank_files(out, rank) and not split.rank_files(out, 1 - rank)
-        full, folder = split.RankReader(tmp_path / "ckpt", rank), split.RankReader(out, rank)
+        plan = _plan(out, rank)
+        full, folder = split.RankReader(tmp_path / "ckpt", plan), split.RankReader(out, plan)
         assert not full.split and folder.split
         for name, (dtype, shape) in TENSORS.items():
             if KINDS[name] == "drop":
@@ -76,7 +88,7 @@ def test_rank_shares_read_in_place_and_after_a_split_agree(tmp_path):
             a, b = full.get(name), folder.get(name)
             assert a.dtype == b.dtype and a.shape == b.shape and torch.equal(a.view(torch.uint8), b.view(torch.uint8))
     # the two ranks' parts put back together are the checkpoint's tensor (rank 1's read ahead on threads)
-    r0, r1 = split.RankReader(tmp_path / "ckpt", 0), split.RankReader(tmp_path / "ckpt", 1)
+    r0, r1 = (split.RankReader(tmp_path / "ckpt", _plan(tmp_path / "ckpt", rank)) for rank in (0, 1))
     r1.prefetch([name for name in TENSORS if KINDS[name] != "drop"])
     for name, (dtype, shape) in TENSORS.items():
         kind = KINDS[name]
@@ -92,7 +104,7 @@ def test_rank_shares_read_in_place_and_after_a_split_agree(tmp_path):
     assert not r1.ahead
     r1.close()
     with pytest.raises(ValueError):
-        split.RankReader(tmp_path / "rank0", 1)      # rank 0's folder given to rank 1
+        split.RankReader(tmp_path / "rank0", _plan(tmp_path / "rank0", 1))      # rank 0's folder given to rank 1
 
 
 def test_reads_ahead_in_runs_of_neighbouring_tensors(tmp_path, monkeypatch):
@@ -102,7 +114,8 @@ def test_reads_ahead_in_runs_of_neighbouring_tensors(tmp_path, monkeypatch):
         monkeypatch.setattr(split, "RUN", run)
         monkeypatch.setattr(split, "GAP", gap)
         for rank in (0, 1):
-            ahead, alone = split.RankReader(tmp_path / "ckpt", rank), split.RankReader(tmp_path / "ckpt", rank)
+            plan = _plan(tmp_path / "ckpt", rank)
+            ahead, alone = split.RankReader(tmp_path / "ckpt", plan), split.RankReader(tmp_path / "ckpt", plan)
             ahead.prefetch(names)
             reads = len({id(f) for f in ahead.ahead.values()})
             assert reads == 2 if run > 100 else reads > 2              # the checkpoint has two files
@@ -120,7 +133,8 @@ def test_reads_ahead_uploaded_to_the_gpu_match_the_host_reads(tmp_path, monkeypa
         monkeypatch.setattr(split, "RUN", run)
         monkeypatch.setattr(split, "GAP", gap)
         for rank in (0, 1):
-            ahead, alone = split.RankReader(tmp_path / "ckpt", rank), split.RankReader(tmp_path / "ckpt", rank)
+            plan = _plan(tmp_path / "ckpt", rank)
+            ahead, alone = split.RankReader(tmp_path / "ckpt", plan), split.RankReader(tmp_path / "ckpt", plan)
             ahead.prefetch(names, "cuda")
             for name in names:
                 a, b = ahead.get(name), alone.get(name)
@@ -137,7 +151,8 @@ def test_rank_folders_read_ahead_like_the_checkpoint(tmp_path):
         out = tmp_path / f"rank{rank}"
         split.main([str(tmp_path / "ckpt"), "--rank", str(rank), str(out)])
         for device in (None, "cuda"):
-            ahead, alone = split.RankReader(out, rank), split.RankReader(out, rank)
+            plan = _plan(out, rank)
+            ahead, alone = split.RankReader(out, plan), split.RankReader(out, plan)
             ahead.prefetch(names, device)
             for name in names:
                 a, b = ahead.get(name), alone.get(name)
@@ -155,7 +170,8 @@ def test_uploads_queued_without_waits_match_the_host_reads(tmp_path, monkeypatch
     monkeypatch.setattr(split, "GAP", 0)
     names = [name for name in TENSORS if KINDS[name] != "drop"]
     for rank in (0, 1):
-        ahead, alone = split.RankReader(tmp_path / "ckpt", rank), split.RankReader(tmp_path / "ckpt", rank)
+        plan = _plan(tmp_path / "ckpt", rank)
+        ahead, alone = split.RankReader(tmp_path / "ckpt", plan), split.RankReader(tmp_path / "ckpt", plan)
         ahead.prefetch(names, "cuda")
         taken = [ahead.get(name).clone() for name in names]
         torch.cuda.synchronize()
