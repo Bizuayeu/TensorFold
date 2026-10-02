@@ -109,6 +109,46 @@ def _expand_v(OL, WV, OUT, R, H: tl.constexpr, DV: tl.constexpr, LW: tl.constexp
 
 
 @triton.jit
+def _absorb_q_rows(Q, WK, QA, R, H: tl.constexpr, D: tl.constexpr, LW: tl.constexpr, BN: tl.constexpr,
+                   RB: tl.constexpr):
+    """_absorb_q for the RB rows of program (head, column block, row block): the same per-row sum and shapes, so
+    _absorb_q's bits, with R / RB times the programs (a prompt chunk's rows no longer wait in one loop)."""
+
+    h = tl.program_id(0)
+    n0 = tl.program_id(1) * BN
+    r0 = tl.program_id(2) * RB
+    k = tl.arange(0, D)
+    n = n0 + tl.arange(0, BN)
+    w = tl.load(WK + (h * D + k[:, None]) * LW + n[None, :]).to(tl.float32)            # [D, BN]
+    for r in range(r0, tl.minimum(r0 + RB, R)):
+        q = tl.load(Q + (r * H + h) * D + k).to(tl.float32)
+        acc = tl.sum(q[:, None] * w, axis=0)
+        tl.store(QA + (r * H + h) * LW + n, acc.to(tl.bfloat16))
+
+
+@triton.jit
+def _expand_v_rows(OL, WV, OUT, R, H: tl.constexpr, DV: tl.constexpr, LW: tl.constexpr, BN: tl.constexpr,
+                   RB: tl.constexpr):
+    """_expand_v for the RB rows of program (head, output block, row block): _expand_v's bits, more programs."""
+
+    h = tl.program_id(0)
+    n0 = tl.program_id(1) * BN
+    r0 = tl.program_id(2) * RB
+    k = tl.arange(0, LW)
+    n = n0 + tl.arange(0, BN)
+    w = tl.load(WV + (h * DV + n[:, None]) * LW + k[None, :]).to(tl.float32)          # [BN, LW]
+    for r in range(r0, tl.minimum(r0 + RB, R)):
+        o = tl.load(OL + (r * H + h) * LW + k).to(tl.float32)
+        acc = tl.sum(w * o[None, :], axis=1)
+        tl.store(OUT + (r * H + h) * DV + n, acc.to(tl.bfloat16))
+
+
+# BF16 absorb / expand of windows from this many rows (prompt chunks): rows in blocks of PROMPT_RB over more programs
+PROMPT_ROWS = 64
+PROMPT_RB = 64
+
+
+@triton.jit
 def _absorb_q4(Q, WW, WS, WB, QA, R, H: tl.constexpr, D: tl.constexpr, LW: tl.constexpr, RB: tl.constexpr):
     """Program (head, 64-latent group, RB rows): QA = Q @ W with W = q * s + b per group, weights loaded once for the block and each row summed alike."""
     h = tl.program_id(0)
@@ -168,6 +208,10 @@ def absorb_q(q: torch.Tensor, a, out: torch.Tensor) -> torch.Tensor:
                                                         num_warps=4)
         return out
     BN = 32
+    if R >= PROMPT_ROWS:
+        _absorb_q_rows[(H, a.lw // BN, triton.cdiv(R, PROMPT_RB))](q, a.wk, out, R, H=H, D=D, LW=a.lw, BN=BN,
+                                                                  RB=PROMPT_RB, num_warps=4)
+        return out
     _absorb_q[(H, a.lw // BN)](q, a.wk, out, R, H=H, D=D, LW=a.lw, BN=BN, num_warps=4)
     return out
 
@@ -181,6 +225,10 @@ def expand_v(o_lat: torch.Tensor, a, out: torch.Tensor) -> torch.Tensor:
                                         num_warps=4)
         return out
     BN = 16
+    if R >= PROMPT_ROWS:
+        _expand_v_rows[(H, a.v_dim // BN, triton.cdiv(R, PROMPT_RB))](o_lat, a.wv, out, R, H=H, DV=a.v_dim, LW=a.lw,
+                                                                      BN=BN, RB=PROMPT_RB, num_warps=4)
+        return out
     _expand_v[(H, a.v_dim // BN)](o_lat, a.wv, out, R, H=H, DV=a.v_dim, LW=a.lw, BN=BN, num_warps=4)
     return out
 
