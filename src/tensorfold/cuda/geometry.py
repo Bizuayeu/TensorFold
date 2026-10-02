@@ -133,6 +133,8 @@ def split_weights(rule, world: int = 2):
             shape[0] = -(-shape[0] // 128) * 128           # a dense NVFP4 projection's rows padded as ``qmm.pack`` pads
         if info["dtype"] == "BF16" and ROUTED_EXPERT.search(name):
             return math.prod(shape) * 9 // 16 + 4, 0       # e2m1 codes, an e4m3 scale per 16, the expert's fp32 scale
+        if name.endswith("_conv1d.weight"):
+            return math.prod(shape) * 2, 0                 # KDA's conv taps held bf16 (fp32 in the NVFP4 checkpoint)
         cast = name.endswith((".A_log", ".dt_bias", ".hc_attn_base", ".hc_attn_scale", ".hc_ffn_base",
                               ".hc_ffn_scale", ".e_score_correction_bias"))
         total = padded(info, shape, float32=cast, name=name)

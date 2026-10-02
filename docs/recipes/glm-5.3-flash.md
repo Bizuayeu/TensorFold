@@ -53,7 +53,8 @@ qualification are TBD [release-0.3.5].
 `nvidia/GLM-5.3-Flash-NVFP4` stores the routed experts and the dense MLP of layers 0 to 2 as ModelOpt NVFP4 (e2m1
 codes, an e4m3 scale per 16 inputs, an fp32 scale a matrix) and every other weight, the MTP layer included, as BF16.
 The engine reads the NVFP4 bytes as stored and runs them on bf16 rows (W4A16): the routed experts on the grouped NVFP4
-kernel, the dense MLP on the exact NVFP4 matmuls; the static input scales are not read. `--precision checkpoint`
+kernel, the dense MLP on the exact NVFP4 matmuls; the static input scales are not read, and the KDA convolution taps,
+fp32 in this checkpoint, are rounded to the bf16 the KDA kernels take. `--precision checkpoint`
 (FP4 rows) is refused when named, since the grouped expert kernel has no input-scale path. The MTP layer's 288 BF16
 routed experts are packed to NVFP4 at load by ModelOpt's recipe, about 4.85 GiB less a rank; they only draft, and
 verification never reads them, so replies are unchanged. The visual tower is not loaded. The startup estimate is

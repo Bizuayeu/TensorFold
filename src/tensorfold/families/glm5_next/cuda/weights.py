@@ -312,7 +312,10 @@ def load(model_dir: str | Path, *, rank: int, device: str = "cuda", mtp: bool = 
     def kda(i: int) -> KDAW:
         p = f"layers.{i}.self_attn."
         proj = stack([p + "q_proj", p + "k_proj", p + "v_proj", p + "f_a_proj", p + "g_a_proj", p + "b_proj"])
-        conv = torch.cat([t(p + f"{x}_conv1d.weight") for x in "qkv"]).reshape(3 * LL * 128, cfg.conv).contiguous()
+        # the KDA kernels take bf16 taps; NVIDIA's NVFP4 checkpoint stores them fp32 (rounded here, 3 x 4 a channel)
+        # cc-defer: fp32 conv taps rounded to bf16; keep them fp32 once kda.cu reads fp32 conv weights
+        conv = torch.cat([t(p + f"{x}_conv1d.weight", torch.bfloat16) for x in "qkv"]).reshape(
+            3 * LL * 128, cfg.conv).contiguous()
         return KDAW(proj, q4(p + "f_b_proj"), q4(p + "g_b_proj"), conv, t(p + "A_log", torch.float32).contiguous(),
                     t(p + "dt_bias", torch.float32).contiguous(), t(p + "o_norm.weight"), q4(p + "o_proj"), LL)
 
