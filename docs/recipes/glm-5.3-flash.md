@@ -102,6 +102,13 @@ chunk can see, rounded up to a power of two. Every kernel computes a row alone i
 position, so a decode window's rows keep the serial steps' bits; prompt chunks give the same bits for any
 chunking. The memory estimate sizes the latent cache (`mla_geometry(latent=True)`).
 
+`TF_GLM_KV=fp8` (both ranks the same; it needs the latent cache) keeps the latents and the indexer's pooled keys as
+FP8 e4m3 rows with a power-of-two scale each: 528 bytes instead of 1,024 a token and layer, 144 instead of 256 a pool.
+With the index keys and gates still bf16, the caches take 12,912 bytes a token on each rank instead of 19,200
+(11 DSA layers and the MTP head). It is lossy, so replies differ from bf16's, but a row's bytes depend on its bf16
+row alone: drafted replies still equal serial ones, resumed prompts fresh ones, and any prompt chunking leaves the
+same cache. The memory estimate counts the FP8 rows.
+
 Measured on two DGX Sparks (GB10, 128 GB each) with the MLX 4-bit checkpoint, MTP drafts only,
 `--context 262144`, a synthetic codebase with one hidden fact, cold prompts:
 
