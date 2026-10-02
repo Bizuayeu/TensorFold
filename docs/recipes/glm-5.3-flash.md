@@ -122,6 +122,16 @@ With the index keys and gates still bf16, the caches take 12,912 bytes a token o
 row alone: drafted replies still equal serial ones, resumed prompts fresh ones, and any prompt chunking leaves the
 same cache. The memory estimate counts the FP8 rows.
 
+A prompt chunk exchanges its rank partials in row pieces (`TF_GLM_PREFILL_OVERLAP`, default 1, and
+`TF_GLM_OVERLAP_PIECES`, default 4; both ranks the same, the startup comparison refuses a mismatch): each piece's
+all-gather runs on a second CUDA stream while the next pieces are computed, and each piece's hyper-connection glue
+waits for its own gather only. The kernels keep rows apart, so the bits are `TF_GLM_PREFILL_OVERLAP=0`'s. On two DGX
+Sparks with `nvidia/GLM-5.3-Flash-NVFP4`, `TF_GLM_KV=fp8` and `--context 0`, a 38,960-token prompt fills at 1,170
+tok/s pieced and 1,068 unpieced (944 before the BF16 prompt matmuls kept their K slices in registers); decode and
+its replies are unchanged. NCCL on both PCIe links of the cabled CX7 port (`NCCL_IB_HCA=rocep1s0f1,roceP2p1s0f1` on
+one Spark and the matching pair on the other, each a RoCE v2 GID on its own subnet) fills the same prompt at 1,217
+tok/s.
+
 Measured on two DGX Sparks (GB10, 128 GB each) with the MLX 4-bit checkpoint, MTP drafts only,
 `--context 262144`, a synthetic codebase with one hidden fact, cold prompts:
 
