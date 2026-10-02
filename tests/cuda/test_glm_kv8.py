@@ -222,10 +222,15 @@ def test_estimate_counts_what_the_caches_allocate(engine_kv8):
         del st
 
 
+@pytest.mark.parametrize("n", [300, PROMPT], ids=["dense", "sparse"])
 @pytest.mark.parametrize("sampling", [Sampling(99, 1.0, 20, 0.95), None], ids=["sampled", "greedy"])
-def test_fp8_drafted_equals_serial(engine_kv8, sampling):
-    prompt = _prompt()
+def test_fp8_drafted_equals_serial(engine_kv8, sampling, n):
+    """Within the dense limit (dense decode graphs) and past it (sparse graphs)."""
+    prompt = _prompt(n=n)
+    kind = "main" if n < 2051 else "sparse"
+    before = engine_kv8.e.replays[kind]
     serial, stats = _generate(engine_kv8, prompt, sampling, draft=False, tokens=32)
+    assert engine_kv8.e.replays[kind] > before
     assert len(serial) == 32 and stats["drafts"] is False
     for policy in (None, "2", "c3:0.35"):
         drafted, _ = _generate(engine_kv8, prompt, sampling, policy=policy, tokens=32)
