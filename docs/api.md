@@ -74,6 +74,11 @@ with thinking off, without tools, stop strings or structured output. Each visibl
 distribution at temperature 1, before temperature, top-k or top-p sampling filters, including when generation is
 greedy. Alternatives are tokenizer tokens and may include leading spaces; `bytes` preserves partial UTF-8 sequences.
 Unsupported backends, engines and request modes return HTTP 400 when probabilities are requested.
+CUDA GLM-5.3-Flash answers vLLM's `prompt_logprobs` (0 through 20) on nonstreamed completions in
+`choices[0].prompt_logprobs`: `null` for the first prompt token, then for each later one a map from token ID
+strings to `logprob`, `rank` and `decoded_token`, holding the prompt token itself (ranked in the whole vocabulary)
+and the top entries (ranked by position). Logits are the head's BF16 ones; the rows do not depend on the prompt
+chunking, and such a request prefills its whole prompt rather than resuming a kept one.
 `ignore_eos: true` keeps user-supplied `stop` strings active, including when a stop string spans streamed chunks.
 Both backends reject a non-boolean `ignore_eos` or a malformed `stop` with HTTP 400 before a stream opens.
 Both backends reject malformed `temperature`, `top_p`, `top_k` and `seed` values with HTTP 400, whether or not
