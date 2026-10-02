@@ -15,7 +15,7 @@ from tensorfold.engine import grammar
 from tensorfold.server.cancellation import RequestCancelled
 from tensorfold.server.errors import CONTEXT_LIMIT, RequestError, refusal
 from tensorfold.server.messages import validate_modalities
-from tensorfold.server.probabilities import TokenBytes, probability_options
+from tensorfold.server.probabilities import TokenBytes, probability_options, prompt_entries, prompt_probability_options
 from tensorfold.server.request_options import heard_effort, parse_numbers, thinking_fields
 from tensorfold.server.stopping import matched_stop, stop_options
 from tensorfold.server.token_routes import flag, token_ids
@@ -51,6 +51,7 @@ class PreparedRequest:
     vision: Any = None
     grammar: Any = None     # (spec, compiled grammar) of the request's response_format, or None
     think_budget: int = 0   # reply tokens before the server closes a think block the reply leaves open (0: no limit)
+    prompt_top: int | None = None   # prompt_logprobs: the top entries each prompt position lists, or None
 
 
 def _native_context(model_dir: Path) -> int:
@@ -118,6 +119,7 @@ class App:
             return "the request body must be a JSON object"
         try:
             probability_options(body, supported=bool(getattr(self.engine, "supports_logprobs", False)))
+            prompt_probability_options(body, supported=bool(getattr(self.engine, "supports_prompt_logprobs", False)))
         except RequestError as exc:
             return str(exc)
         if body.get("draft", True) is False and "draft" not in inspect.signature(self.engine.generate).parameters:
@@ -253,6 +255,10 @@ class App:
                                    "stop strings or structured output")
             if not hasattr(self, "_probability_decoder"):
                 self._probability_decoder = TokenBytes(self.tok)
+        prompt_top = prompt_probability_options(body, supported=bool(getattr(self.engine, "supports_prompt_logprobs",
+                                                                              False)))
+        if prompt_top is not None and (chat or body.get("stream")):
+            raise RequestError("prompt_logprobs support nonstreamed completions")
         compiled = (spec, self._grammars().compile(spec)) if spec is not None else None
         if chat:
             if not isinstance(body.get("messages"), list):
@@ -287,7 +293,8 @@ class App:
             raise RequestError("rendered prompt is empty")
         # sampling is resolved here, so a malformed control is refused before a stream opens
         return PreparedRequest(prompt, max_tokens, tools, thinking, self.sampling_for(body, prompt),
-                               ignore_eos=ignore_eos, stop=stop, grammar=compiled, think_budget=budget)
+                               ignore_eos=ignore_eos, stop=stop, grammar=compiled, think_budget=budget,
+                               prompt_top=prompt_top)
 
     def token_ids(self, value: Any, field: str = "prompt") -> list[int]:
         """Token ids as a request gives them (a list, or a list holding one list); RequestError outside the
@@ -495,6 +502,11 @@ class App:
         gates = [g for g in (gate, budget, Yield(turns) if yielding else None) if g is not None]
 
         cached: list[int] = []              # the prompt tokens the first run found cached (usage's cached_tokens)
+        prompt_rows = None
+        if prepared.prompt_top is not None:
+            from tensorfold.engine.probabilities import PromptProbabilities
+
+            prompt_rows = PromptProbabilities(prepared.prompt_top, prompt)
 
         def generate(ids: list[int], count: int, feed: Callable[[list[int]], bool]) -> Any:
             if yielding and cached:                 # a run after a cut: foreground requests waiting go first
@@ -512,6 +524,8 @@ class App:
                 same = list(ids) == list(prepared.vision.token_ids)
                 extra["vision"] = prepared.vision if same else continued(prepared.vision, ids,
                                                                        self.vision.frontend.config)
+            if prompt_rows is not None and not cached:    # the first run reads the prompt; a later one resumes it
+                extra["prompt_logprobs"] = prompt_rows
             stats = self.engine.generate(ids, count, sampling, feed, **extra)
             if not cached:
                 cached.append(int((stats or {}).get("cached") or 0))
@@ -557,9 +571,14 @@ class App:
                     if probabilities is not None else None)
         # the calls already sent as deltas; the handler sends the rest (a call the streamer could not follow)
         streamed = calls_stream.index + 1 if calls_stream is not None and calls_stream.streamed else 0
+        prompt_logprobs = None
+        if prompt_rows is not None:
+            prompt_logprobs = prompt_entries(prompt_rows.emitted(),
+                                             lambda token: self.tok.decode([token], skip_special_tokens=False))
         return {"final": final, "calls": calls, "finish": finish, "content": content, "reasoning": reasoning,
                 "stop_sequence": matched_stop(raw_text, stops.strings),
                 **({"logprobs": logprobs} if logprobs is not None else {}),
+                **({"prompt_logprobs": prompt_logprobs} if prompt_logprobs is not None else {}),
                 "prompt_tokens": len(prompt), "completion_tokens": len(out), "cached_tokens": (cached or [0])[0],
                 "reasoning_tokens": reasoning_count(out, self.tok.token_to_id("</think>") if chat and thinking else None),
                 "stats": stats, "calls_streamed": streamed}
