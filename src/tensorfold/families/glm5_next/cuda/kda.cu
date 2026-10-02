@@ -48,7 +48,7 @@ __device__ __forceinline__ void update(float (&s)[4][4], const float (&kk)[4], c
 __global__ void __launch_bounds__(1024) chain_kernel(
         int H, const __nv_bfloat16* __restrict__ P, int p_stride, int b_off,
         const __nv_bfloat16* __restrict__ A, int a_stride, const __nv_bfloat16* __restrict__ G, int g_stride,
-        const __nv_bfloat16* __restrict__ cs, const __nv_bfloat16* __restrict__ cw,
+        const __nv_bfloat16* __restrict__ cs, const float* __restrict__ cw,
         const float* __restrict__ state_in, const float* __restrict__ a_log, const float* __restrict__ dt_bias,
         const __nv_bfloat16* __restrict__ norm_w, float eps, float lower, int rows,
         __nv_bfloat16* __restrict__ out, float* __restrict__ state_out,
@@ -76,7 +76,7 @@ __global__ void __launch_bounds__(1024) chain_kernel(
                 const int at = r + tap;
                 const float x = at < TAPS - 1 ? __bfloat162float(cs[(size_t)at * C + c])
                                               : __bfloat162float(P[(size_t)(at - (TAPS - 1)) * p_stride + c]);
-                acc = acc + __bfloat162float(cw[(size_t)c * TAPS + tap]) * x;
+                acc = acc + cw[(size_t)c * TAPS + tap] * x;
             }
             const float act = bf(acc / (1.0f + expf(-acc)));
             if (t < DK) qs[t] = act;
@@ -221,7 +221,7 @@ __global__ void __launch_bounds__(1024) replay_layers_kernel(
 __global__ void __launch_bounds__(512) prep_kernel(
         int H, const __nv_bfloat16* __restrict__ P, int p_stride, int b_off,
         const __nv_bfloat16* __restrict__ A, int a_stride, const __nv_bfloat16* __restrict__ cs,
-        const __nv_bfloat16* __restrict__ cw, const float* __restrict__ a_log, const float* __restrict__ dt_bias,
+        const float* __restrict__ cw, const float* __restrict__ a_log, const float* __restrict__ dt_bias,
         float lower, float* __restrict__ q_out, float* __restrict__ k_save, __nv_bfloat16* __restrict__ v_save,
         float* __restrict__ g_save, float* __restrict__ b_save) {
     const int C = 3 * H * DK;
@@ -237,7 +237,7 @@ __global__ void __launch_bounds__(512) prep_kernel(
             const int at = r + tap;
             const float x = at < TAPS - 1 ? __bfloat162float(cs[(size_t)at * C + c])
                                           : __bfloat162float(P[(size_t)(at - (TAPS - 1)) * p_stride + c]);
-            acc = acc + __bfloat162float(cw[(size_t)c * TAPS + tap]) * x;
+            acc = acc + cw[(size_t)c * TAPS + tap] * x;
         }
         const float act = bf(acc / (1.0f + expf(-acc)));
         if (t < DK) qs[t] = act;
@@ -367,7 +367,7 @@ void kda_chain_cuda(const at::Tensor& P, int64_t p_stride, int64_t b_off, const 
     const int H = (int)a_log.numel();
     chain_kernel<<<H, 1024, 0, stream>>>(
         H, ptr<__nv_bfloat16>(P), (int)p_stride, (int)b_off, ptr<__nv_bfloat16>(A), (int)a_stride,
-        ptr<__nv_bfloat16>(G), (int)g_stride, ptr<__nv_bfloat16>(cs), ptr<__nv_bfloat16>(cw), ptr<float>(state_in),
+        ptr<__nv_bfloat16>(G), (int)g_stride, ptr<__nv_bfloat16>(cs), ptr<float>(cw), ptr<float>(state_in),
         ptr<float>(a_log), ptr<float>(dt_bias), ptr<__nv_bfloat16>(norm_w), (float)eps, (float)lower, (int)rows,
         ptr<__nv_bfloat16>(out), ptr<float>(state_out), ptr<float>(k_save), ptr<__nv_bfloat16>(v_save),
         ptr<float>(g_save), ptr<float>(b_save));
@@ -405,7 +405,7 @@ void kda_chain_wide_cuda(const at::Tensor& P, int64_t p_stride, int64_t b_off, c
     const dim3 grid((unsigned)rows, (unsigned)H);
     prep_kernel<<<grid, 512, 0, stream>>>(
         H, ptr<__nv_bfloat16>(P), (int)p_stride, (int)b_off, ptr<__nv_bfloat16>(A), (int)a_stride,
-        ptr<__nv_bfloat16>(cs), ptr<__nv_bfloat16>(cw), ptr<float>(a_log), ptr<float>(dt_bias), (float)lower,
+        ptr<__nv_bfloat16>(cs), ptr<float>(cw), ptr<float>(a_log), ptr<float>(dt_bias), (float)lower,
         ptr<float>(q_tmp), ptr<float>(k_save), ptr<__nv_bfloat16>(v_save), ptr<float>(g_save), ptr<float>(b_save));
     C10_CUDA_KERNEL_LAUNCH_CHECK();
     constexpr int WARPS = 4, TR = 16;

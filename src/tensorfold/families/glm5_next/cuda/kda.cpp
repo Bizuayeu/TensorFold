@@ -27,7 +27,7 @@ void chain(const at::Tensor& P, int64_t p_stride, int64_t b_off, const at::Tenso
     check(A, at::kBFloat16, "A");
     check(G, at::kBFloat16, "G");
     check(cs, at::kBFloat16, "conv state");
-    check(cw, at::kBFloat16, "conv weight");
+    check(cw, at::kFloat, "conv weight");
     check(state_in, at::kFloat, "state");
     check(a_log, at::kFloat, "A_log");
     check(dt_bias, at::kFloat, "dt_bias");
@@ -55,7 +55,7 @@ void chain_wide(const at::Tensor& P, int64_t p_stride, int64_t b_off, const at::
     check(A, at::kBFloat16, "A");
     check(G, at::kBFloat16, "G");
     check(cs, at::kBFloat16, "conv state");
-    check(cw, at::kBFloat16, "conv weight");
+    check(cw, at::kFloat, "conv weight");
     check(state_in, at::kFloat, "state");
     check(out, at::kBFloat16, "out");
     check(k_save, at::kFloat, "k");
