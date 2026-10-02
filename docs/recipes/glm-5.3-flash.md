@@ -9,9 +9,10 @@ Kimi delta attention, sparse MLA and MoE blocks mix four residual streams.
 
 On CUDA GLM-5.3-Flash runs on two ranks from Brandon M. Music's EXL3/TR3 checkpoint
 (`brandonmusic/GLM-5.3-Flash-tr3-4bpw`, re-hosted as `Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw`; experimental;
-[EXL3](#exl3)) or from the MLX 4-bit checkpoint, the portable option that a 256 GB Mac serves too.
-No NVFP4 checkpoint of it is read. `tensorfold serve` loads the checkpoint you name; it picks none by itself. Prompt
-precision does not change here: neither checkpoint has an FP8 prompt kernel, so `--prefill-fp8` is refused.
+[EXL3](#exl3)), from NVIDIA's ModelOpt NVFP4 checkpoint (`nvidia/GLM-5.3-Flash-NVFP4`, untested on the real weights;
+[NVFP4](#nvfp4)) or from the MLX 4-bit checkpoint, the portable option that a 256 GB Mac serves too.
+`tensorfold serve` loads the checkpoint you name; it picks none by itself. Prompt precision does not change here: no
+checkpoint has an FP8 prompt kernel, so `--prefill-fp8` is refused.
 
 Use the [two-rank container setup](../../RUNBOOK.md#nvidia-gpus) and pull the same checkpoint on both ranks:
 
@@ -46,6 +47,17 @@ two-rank command above, substituting its checkpoint ID on both ranks. With DFlas
 The expert decoder and BF16 target matmul keep row arithmetic fixed. A quantized copy of the head may
 propose drafts, but target verification retains the BF16 head. EXL3 speed, capacity and long-context
 qualification are TBD [release-0.3.5].
+
+### NVFP4
+
+`nvidia/GLM-5.3-Flash-NVFP4` stores the routed experts and the dense MLP of layers 0 to 2 as ModelOpt NVFP4 (e2m1
+codes, an e4m3 scale per 16 inputs, an fp32 scale a matrix) and every other weight, the MTP layer included, as BF16.
+The engine reads the NVFP4 bytes as stored and runs them on bf16 rows (W4A16): the routed experts on the grouped NVFP4
+kernel, the dense MLP on the exact NVFP4 matmuls; the static input scales are not read. `--precision checkpoint`
+(FP4 rows) is refused when named, since the grouped expert kernel has no input-scale path. The MTP layer's 288 BF16
+routed experts are packed to NVFP4 at load by ModelOpt's recipe, about 4.85 GiB less a rank; they only draft, and
+verification never reads them, so replies are unchanged. The visual tower is not loaded. The startup estimate is
+about 91 GiB of weights a rank. Speed, capacity and long-context qualification on the real weights are TBD.
 
 ### Draft policies
 
