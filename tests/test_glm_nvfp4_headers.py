@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from tensorfold.cuda import geometry
-from tensorfold.families.glm5_next.cuda.split import rule
+from tensorfold.families.glm5_next.cuda.split import ShardPlan, rule
 
 HERE = Path(__file__).parent / "fixtures" / "glm53_flash_nvfp4"
 GIB = 2 ** 30
@@ -96,6 +96,7 @@ def _component(name: str, layers: int) -> str:
     return "other"
 
 
+@pytest.mark.torch                       # the rank's plan reads the engine's Config (weights.py imports torch)
 def test_rank_bytes(headers, text, capsys):
     """split_weights on the real headers, each rank: the routed experts as stored (blocks hold the codes and their
     e4m3 scales byte for byte), the MTP layer's BF16 experts at the NVFP4 size they are packed to, nothing for input
@@ -105,7 +106,9 @@ def test_rank_bytes(headers, text, capsys):
     first = int(text["first_k_dense_replace"])
     experts, width = int(text["n_routed_experts"]), int(text["moe_intermediate_size"])
     hidden, dense = int(text["hidden_size"]), int(text["intermediate_size"])
-    transform = geometry.split_weights(rule)
+    from tensorfold.families.glm5_next.cuda.weights import Config
+
+    transform = geometry.split_weights(rule, ShardPlan(Config.read(HERE), 2, 0))
     parts: dict[str, int] = {}
     for name, (dtype, shape) in headers.items():
         size, host = transform(name, {"dtype": dtype, "shape": shape})

@@ -8,6 +8,7 @@ from types import SimpleNamespace, ModuleType
 import pytest
 
 from tensorfold.cuda import geometry, capacity
+from tensorfold.families.glm5_next.cuda.split import ShardPlan
 
 
 class Allocation:
@@ -162,7 +163,8 @@ def test_mla_actual_cache_and_replay_state_are_budgeted(monkeypatch, allocations
                           dense_width=1024, top_k=2, moe_width=512, experts=8, quant="mlx")
     layers = [SimpleNamespace(index=i, kind="kda" if i % 2 == 0 else "dsa",
                               kda=SimpleNamespace(proj=SimpleNamespace(n=3 * 4 * 128 + 256 + 4))) for i in range(4)]
-    weights = SimpleNamespace(cfg=cfg, world=2, device="cpu", layers=layers, meta={"long_context": True},
+    weights = SimpleNamespace(cfg=cfg, world=2, plan=ShardPlan(cfg, 2, 0), device="cpu", layers=layers,
+                              meta={"long_context": True},
                               mtp=SimpleNamespace() if mtp else None, head=SimpleNamespace(n=512))
     slots = 65536
     attention = importlib.import_module("tensorfold.families.glm5_next.cuda.attention")
@@ -194,8 +196,8 @@ def test_mla_prompt_chunk_latent_partials_hold_one_row_block(monkeypatch, alloca
                           quant="mlx")
     layers = [SimpleNamespace(index=i, kind="kda" if i % 2 == 0 else "dsa",
                               kda=SimpleNamespace(proj=SimpleNamespace(n=3 * 4 * 128 + 256 + 4))) for i in range(4)]
-    weights = SimpleNamespace(cfg=cfg, world=2, device="cpu", layers=layers, meta={}, mtp=None,
-                              head=SimpleNamespace(n=512))
+    weights = SimpleNamespace(cfg=cfg, world=2, plan=ShardPlan(cfg, 2, 0), device="cpu", layers=layers,
+                              meta={}, mtp=None, head=SimpleNamespace(n=512))
     assert mod.PROMPT_ATT_ROWS == geometry.MLA_PROMPT_ATT_ROWS == 512
     assert sparse.SELECT_ROWS == geometry.MLA_SELECT_ROWS == 512
     for rows, prefill, part in ((2048, True, 512), (4096, True, 512), (256, True, 256), (16, False, 16)):
@@ -215,7 +217,7 @@ def test_mla_chunk_scratch_counts_one_block_of_pool_scores():
 
 def test_weight_partition_rounding_and_float_casts():
     from tensorfold.families.glm5_next.cuda.split import rule
-    transform = geometry.split_weights(rule)
+    transform = geometry.split_weights(rule, ShardPlan(SimpleNamespace(moe_width=256, lin_heads=64), 2, 0))
     info = {"dtype": "U32", "shape": [192, 128], "split": False}
     assert transform("model.language_model.layers.0.mlp.experts.0.gate_proj.weight", info) == (128 * 128 * 4, 0)
     assert transform("model.language_model.layers.0.mlp.experts.0.down_proj.weight", info) == (192 * 64 * 4, 0)
@@ -259,7 +261,8 @@ def test_mla_exl3_scratch_and_buffers_are_budgeted(monkeypatch, allocations, mtp
                           moe_width=2048, shared_width=2048, experts=288, quant="exl3")
     layers = [SimpleNamespace(index=i, kind="kda" if i % 2 == 0 else "dsa",
                               kda=SimpleNamespace(proj=SimpleNamespace(n=3 * 32 * 128 + 256 + 32))) for i in range(4)]
-    weights = SimpleNamespace(cfg=cfg, world=2, device="cpu", layers=layers, meta={"long_context": True},
+    weights = SimpleNamespace(cfg=cfg, world=2, plan=ShardPlan(cfg, 2, 0), device="cpu", layers=layers,
+                              meta={"long_context": True},
                               mtp=SimpleNamespace() if mtp else None, head=SimpleNamespace(n=154880 // 2))
     slots, d, width = 9, 4096, 1024
     for rows in (8, 64, geometry.PREFILL_ROWS):
@@ -301,7 +304,8 @@ def test_mla_nvfp4_buffers_are_budgeted(monkeypatch, allocations, mtp):
                           moe_width=2048, shared_width=2048, experts=288, quant="nvfp4")
     layers = [SimpleNamespace(index=i, kind="kda" if i % 2 == 0 else "dsa",
                               kda=SimpleNamespace(proj=SimpleNamespace(n=3 * 32 * 128 + 256 + 32))) for i in range(4)]
-    weights = SimpleNamespace(cfg=cfg, world=2, device="cpu", layers=layers, meta={"long_context": True},
+    weights = SimpleNamespace(cfg=cfg, world=2, plan=ShardPlan(cfg, 2, 0), device="cpu", layers=layers,
+                              meta={"long_context": True},
                               mtp=SimpleNamespace() if mtp else None, head=SimpleNamespace(n=154880 // 2))
     cap = 1 << 20
     mod.Buffers(weights, 64, cap)
@@ -396,7 +400,8 @@ def test_mla_cache_bytes_are_what_the_state_allocates(monkeypatch, allocations, 
     cfg = SimpleNamespace(heads=64, lin_heads=64, conv=4, qk_dim=256, v_dim=256, index_dim=128, kv_lora=512)
     layers = [SimpleNamespace(index=i, kind="kda" if i % 2 == 0 else "dsa",
                               kda=SimpleNamespace(proj=SimpleNamespace(n=8))) for i in range(4)]
-    weights = SimpleNamespace(cfg=cfg, world=2, device="cpu", layers=layers, meta={"long_context": True},
+    weights = SimpleNamespace(cfg=cfg, world=2, plan=ShardPlan(cfg, 2, 0), device="cpu", layers=layers,
+                              meta={"long_context": True},
                               mtp=SimpleNamespace() if mtp else None)
     slots = 65536 + 12
     st = mod.State(weights, slots, 8, kv=kv)

@@ -120,7 +120,7 @@ class GlmEngine:
         from tensorfold.cuda.comm import open_comm
         from .decode import Engine
         from .weights import Config, load
-        from .split import rule
+        from .split import ShardPlan, rule
         from tensorfold.cuda.capacity import admit
         from tensorfold.cuda.geometry import (PREFILL_ROWS, dflash2_geometry, dflash2_weights, mla_geometry,
                                               split_weights)
@@ -144,7 +144,7 @@ class GlmEngine:
             raise ValueError("TF_GLM_KV=fp8 holds the latent cache: it needs TF_GLM_LATENT=1")
         # TF_GLM_MTP off: the MTP layer's tensors, caches and buffers are neither loaded nor estimated
         self.mtp_on = mtp_head(drafter is not None, serial_only, cfg.mtp_layers)
-        weights_estimate = split_weights(rule)
+        weights_estimate = split_weights(rule, ShardPlan(cfg, 2, rank))
         if not self.mtp_on:
             weights_estimate = without_mtp(weights_estimate, cfg.layers)
         self.capacity_plan = admit(model_dir, context if explicit else cfg.dense_limit, explicit, torch,

@@ -13,6 +13,8 @@ from pathlib import Path
 
 import numpy as np
 
+from tensorfold.cuda.geometry import split_units
+
 ROW = (
     r"\.mlp\.experts\.\d+\.(gate|up)_proj\.",
     r"\.mlp\.shared_experts\.(gate|up)_proj\.",
@@ -70,6 +72,67 @@ def rule(name: str) -> str:
     return hits[0]
 
 
+UNIT = 64       # elements of an MLP width or the vocabulary a rank takes whole (NVFP4's 16-input groups, MLX's 64)
+LAYER = re.compile(r"layers\.(\d+)\.")
+DENSE = re.compile(r"\.mlp\.(gate|up|down)_proj\.")
+DSA_HEADS = re.compile(r"\.self_attn\.(q_b|kv_b)_proj\.")
+KDA_HEADS = re.compile(r"\.self_attn\.((q|k|v)_proj\.|(q|k|v)_conv1d\.|(f_b|g_b|b)_proj\.|A_log$|dt_bias$)")
+
+
+class ShardPlan:
+    """Rank ``rank`` of ``world``'s share of every split axis, cut between whole units of the model's own elements:
+    attention heads one by one, an MLP width or the vocabulary in UNITs (``geometry.split_units``)."""
+
+    def __init__(self, cfg, world: int, rank: int) -> None:
+        if not 0 <= rank < world:
+            raise ValueError(f"rank {rank} of {world}")
+        self.cfg, self.world, self.rank = cfg, world, rank
+
+    def span(self, total: int, unit: int = 1) -> tuple[int, int]:
+        """This rank's [first, end) of ``total`` elements taken in whole ``unit``s."""
+
+        if total % unit:
+            raise ValueError(f"{total} elements are not whole units of {unit}")
+        first, end = split_units(total // unit, self.world, self.rank)
+        return first * unit, end * unit
+
+    def axis(self, name: str) -> tuple[int, int]:
+        """(elements, unit) of tensor ``name``'s split axis in the model: its heads, or an MLP width or vocabulary."""
+
+        c = self.cfg
+        if name.startswith("lm_head."):
+            return c.vocab, UNIT
+        if ".mlp.experts." in name:
+            return c.moe_width, UNIT
+        if ".mlp.shared_experts." in name:
+            return c.shared_width, UNIT
+        if DENSE.search(name):
+            return c.dense_width, UNIT
+        if DSA_HEADS.search(name):
+            return c.heads, 1
+        if KDA_HEADS.search(name):
+            return c.lin_heads, 1
+        if ".self_attn.o_proj." in name:            # the MTP layer (index ``layers``) is a DSA layer
+            i = int(LAYER.search(name).group(1))
+            return (c.lin_heads if i < c.layers and c.kinds[i] == "kda" else c.heads), 1
+        raise ValueError(f"{name}: no split axis")
+
+    def cut(self, name: str, size: int) -> tuple[int, int]:
+        """This rank's [lo, hi) of ``name``'s split axis stored ``size`` long (bytes, scales, tiles or rows)."""
+
+        total, unit = self.axis(name)
+        lo, hi = self.span(total, unit)
+        if lo * size % total or hi * size % total:
+            raise ValueError(f"{name}: the share [{lo}, {hi}) of {total} elements cuts one of its {size} entries")
+        return lo * size // total, hi * size // total
+
+    def count(self, total: int, unit: int = 1) -> int:
+        """How many of ``total`` elements (heads, or a width in UNITs) this rank holds."""
+
+        first, end = self.span(total, unit)
+        return end - first
+
+
 def read_header(path: str | Path) -> tuple[dict, int]:
     with open(path, "rb") as f:
         n = struct.unpack("<Q", f.read(8))[0]
@@ -77,54 +140,45 @@ def read_header(path: str | Path) -> tuple[dict, int]:
     return header, 8 + n
 
 
-def split_bytes(raw: np.ndarray, shape: list[int], itemsize: int, kind: str, rank: int) -> tuple[np.ndarray, list[int]]:
-    """A tensor's bytes -> rank's part of them and its shape."""
+def split_bytes(raw: np.ndarray, shape: list[int], itemsize: int, kind: str,
+                cut: tuple[int, int] | None) -> tuple[np.ndarray, list[int]]:
+    """A tensor's bytes -> the part [lo, hi) (``cut``) of its split axis and its shape."""
 
     if kind == "rep":
         return raw, list(shape)
+    lo, hi = cut
     if kind == "row":
-        rows = shape[0]
-        if rows % 2:
-            raise ValueError(f"row split of odd leading dim {shape}")
-        per = raw.size // rows
-        half = rows // 2
-        return raw[rank * half * per:(rank + 1) * half * per], [half] + list(shape[1:])
-    if kind == "col":
-        if len(shape) != 2 or shape[1] % 2:
-            raise ValueError(f"column split needs an even 2-D shape, got {shape}")
-        view = raw.reshape(shape[0], shape[1] * itemsize)
-        half = shape[1] // 2
-        part = np.ascontiguousarray(view[:, rank * half * itemsize:(rank + 1) * half * itemsize])
-        return part.reshape(-1), [shape[0], half]
-    if kind == "dim1":                                   # the second axis of a 2-D or higher tensor
-        if len(shape) < 2 or shape[1] % 2:
-            raise ValueError(f"split of the second axis needs an even second dim, got {shape}")
+        per = raw.size // shape[0]
+        return raw[lo * per:hi * per], [hi - lo] + list(shape[1:])
+    if kind in ("col", "dim1"):
+        if len(shape) < 2 or (kind == "col" and len(shape) != 2):
+            raise ValueError(f"{kind} split needs a second dim, got {shape}")
         inner = int(np.prod(shape[2:])) * itemsize
         view = raw.reshape(shape[0], shape[1] * inner)
-        half = shape[1] // 2
-        part = np.ascontiguousarray(view[:, rank * half * inner:(rank + 1) * half * inner])
-        return part.reshape(-1), [shape[0], half] + list(shape[2:])
+        part = np.ascontiguousarray(view[:, lo * inner:hi * inner])
+        return part.reshape(-1), [shape[0], hi - lo] + list(shape[2:])
     raise ValueError(kind)
 
 
-def split_device(raw, shape: list[int], itemsize: int, kind: str, rank: int):
+def split_device(raw, shape: list[int], itemsize: int, kind: str, cut: tuple[int, int] | None):
     """``split_bytes`` for a uint8 tensor on the GPU: the rank's part (a new contiguous tensor) and its shape."""
 
     if kind == "rep":
         return raw.clone(), list(shape)
+    lo, hi = cut
     if kind == "row":
-        if shape[0] % 2:
-            raise ValueError(f"row split of odd leading dim {shape}")
-        per, half = raw.numel() // shape[0], shape[0] // 2
-        return raw[rank * half * per:(rank + 1) * half * per].clone(), [half] + list(shape[1:])
+        per = raw.numel() // shape[0]
+        return raw[lo * per:hi * per].clone(), [hi - lo] + list(shape[1:])
     if kind in ("col", "dim1"):
-        if len(shape) < 2 or shape[1] % 2 or (kind == "col" and len(shape) != 2):
-            raise ValueError(f"{kind} split needs an even second dim, got {shape}")
+        if len(shape) < 2 or (kind == "col" and len(shape) != 2):
+            raise ValueError(f"{kind} split needs a second dim, got {shape}")
         inner = int(np.prod(shape[2:])) * itemsize
-        half = shape[1] // 2
-        part = raw.view(shape[0], shape[1] * inner)[:, rank * half * inner:(rank + 1) * half * inner]
-        return part.contiguous().reshape(-1), [shape[0], half] + list(shape[2:])
+        part = raw.view(shape[0], shape[1] * inner)[:, lo * inner:hi * inner]
+        return part.contiguous().reshape(-1), [shape[0], hi - lo] + list(shape[2:])
     raise ValueError(kind)
+
+
+AXIS = {"row": 0, "col": 1, "dim1": 1}
 
 
 def torch_dtype(dtype: str):
@@ -140,12 +194,12 @@ def rank_files(model_dir: str | Path, rank: int) -> list[Path]:
 
 
 class RankReader:
-    """Read stored-dtype CPU tensors for one rank from the full checkpoint or its pre-split folder."""
+    """Read stored-dtype CPU tensors for one rank (``plan``) from the full checkpoint or its pre-split folder."""
 
-    def __init__(self, model_dir: str | Path, rank: int) -> None:
+    def __init__(self, model_dir: str | Path, plan: ShardPlan) -> None:
         from tensorfold.cuda.direct_read import ReadAhead, Reader, SafeTensors
 
-        self.dir, self.rank = Path(model_dir), rank
+        self.dir, self.plan, rank = Path(model_dir), plan, plan.rank
         self.io = Reader()                                # O_DIRECT reads where the file system allows them
         self.reads = ReadAhead(self.io, READERS, RUN, GAP)
         mine, other = rank_files(self.dir, rank), rank_files(self.dir, 1 - rank)
@@ -186,12 +240,13 @@ class RankReader:
     def close(self) -> None:
         self.reads.close()
 
-    def _span(self, name: str) -> tuple[str, int, int, str, list[int], str]:
-        """(file, first byte, end byte, split kind, shape, dtype) of the bytes this rank reads for ``name``."""
+    def _span(self, name: str) -> tuple[str, int, int, str, list[int], str, tuple[int, int] | None]:
+        """(file, first byte, end byte, split kind, shape, dtype, the rank's cut of the split axis) of the bytes this
+        rank reads for ``name``."""
 
         if self.split:                                    # a rank folder holds the rank's tensors as they are
             path, begin, n, dtype, shape = self.folder.where[name]
-            return str(path), begin, begin + n, "rep", list(shape), dtype
+            return str(path), begin, begin + n, "rep", list(shape), dtype, None
         file = str(self.dir / self.index[name])
         if file not in self.files:
             self.files[file] = read_header(file)
@@ -202,18 +257,20 @@ class RankReader:
             raise KeyError(f"{name} is not used by the engine")
         a, b = info["data_offsets"]
         shape = list(info["shape"])
-        if kind == "row" and shape and shape[0] % 2 == 0:   # the rank's rows are one run: read only those
-            per = (b - a) // shape[0] * (shape[0] // 2)
-            a, b, kind, shape = a + self.rank * per, a + (self.rank + 1) * per, "rep", [shape[0] // 2] + shape[1:]
-        return file, base + a, base + b, kind, shape, info["dtype"]
+        cut = None if kind == "rep" else self.plan.cut(name, shape[AXIS[kind]])
+        if kind == "row":                                 # the rank's rows are one run: read only those
+            per = (b - a) // shape[0]
+            a, b, kind, shape = a + cut[0] * per, a + cut[1] * per, "rep", [cut[1] - cut[0]] + shape[1:]
+            cut = None
+        return file, base + a, base + b, kind, shape, info["dtype"], cut
 
     def _tensor(self, raw: np.ndarray, span: tuple, own: bool):
         """The rank's tensor from the span's bytes; ``own``: never a view of ``raw`` (a shared read's buffer)."""
 
         import torch
 
-        _, _, _, kind, shape, dtype = span
-        data, shape = split_bytes(raw, shape, DTYPE_BYTES[dtype], kind, self.rank)
+        _, _, _, kind, shape, dtype, cut = span
+        data, shape = split_bytes(raw, shape, DTYPE_BYTES[dtype], kind, cut)
         if own and np.may_share_memory(data, raw):
             data = data.copy()
         return torch.from_numpy(data).view(torch_dtype(dtype)).reshape(shape)
@@ -229,8 +286,8 @@ class RankReader:
 
         if not raw.is_cuda:
             return self._tensor(raw.numpy(), span, own=True)
-        _, _, _, kind, shape, dtype = span
-        data, shape = split_device(raw, shape, DTYPE_BYTES[dtype], kind, self.rank)
+        _, _, _, kind, shape, dtype, cut = span
+        data, shape = split_device(raw, shape, DTYPE_BYTES[dtype], kind, cut)
         return data.view(torch_dtype(dtype)).reshape(shape)
 
 def write(path: str, tensors: list[tuple[str, str, list[int], np.ndarray]], metadata: dict | None) -> None:
@@ -252,7 +309,7 @@ def write(path: str, tensors: list[tuple[str, str, list[int], np.ndarray]], meta
     os.replace(tmp, path)
 
 
-def split_file(src: str | Path, out: str | Path, rank: int) -> dict:
+def split_file(src: str | Path, out: str | Path, plan: ShardPlan) -> dict:
     """One checkpoint file -> OUT/<stem>.rank<R>.safetensors with the rank's part of every tensor it keeps."""
 
     header, base = read_header(src)
@@ -269,13 +326,14 @@ def split_file(src: str | Path, out: str | Path, rank: int) -> dict:
             continue
         a, b = info["data_offsets"]
         itemsize = DTYPE_BYTES[info["dtype"]]
-        data, shape = split_bytes(mm[base + a:base + b], info["shape"], itemsize, kind, rank)
+        cut = None if kind == "rep" else plan.cut(name, info["shape"][AXIS[kind]])
+        data, shape = split_bytes(mm[base + a:base + b], info["shape"], itemsize, kind, cut)
         if int(np.prod(shape)) * itemsize != data.size:
             raise ValueError(f"{name}: {shape} does not match {data.size} bytes")
         part.append((name, info["dtype"], shape, data))
     os.makedirs(out, exist_ok=True)
     if part:
-        write(os.path.join(str(out), f"{stem}.rank{rank}.safetensors"), part, metadata)
+        write(os.path.join(str(out), f"{stem}.rank{plan.rank}.safetensors"), part, metadata)
     return summary
 
 
@@ -288,6 +346,9 @@ def main(argv: list[str] | None = None) -> int:
     files = sorted(args.model_dir.glob("model-*.safetensors"))
     if not files:
         raise SystemExit(f"{args.model_dir}: no model-*.safetensors files")
+    from .weights import Config
+
+    plan = ShardPlan(Config.read(args.model_dir), 2, args.rank)
     args.out.mkdir(parents=True, exist_ok=True)
     for name in SMALL:
         if (args.model_dir / name).exists():
@@ -296,7 +357,7 @@ def main(argv: list[str] | None = None) -> int:
         stem = src.name.replace(".safetensors", "")
         if (args.out / f"{stem}.rank{args.rank}.safetensors").exists():
             continue
-        print(src.name, split_file(src, args.out, args.rank), flush=True)
+        print(src.name, split_file(src, args.out, plan), flush=True)
     print(f"rank {args.rank}'s share of {len(files)} files in {args.out}", flush=True)
     return 0
 

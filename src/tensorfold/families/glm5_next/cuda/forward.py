@@ -19,6 +19,7 @@ from tensorfold.cuda.nvfp4.linear import Fp4Linear
 
 from . import KV_KINDS, exl3_generic, glue, kda as kda_mod, kv8, latent, overlap, prof, qmm, sparse
 from .attention import AttnScratch, attention, kv_write
+from .split import UNIT
 from .weights import LayerW, Weights
 
 
@@ -39,8 +40,8 @@ class Buffers:
         dev = w.device
         bf, f32 = torch.bfloat16, torch.float32
         D, S = c.hidden, c.streams
-        HL = c.heads // w.world
-        LL = c.lin_heads // w.world
+        HL = w.plan.count(c.heads)
+        LL = w.plan.count(c.lin_heads)
         self.rows, self.prefill = rows, prefill
         head_rows = 1 if prefill else rows
         self.world = w.world
@@ -89,13 +90,13 @@ class Buffers:
         self.igr = torch.empty((rows, c.index_dim), dtype=f32, device=dev)
         self.qi = torch.empty((rows, c.index_heads * c.index_dim), dtype=bf, device=dev)
         # dense MLP
-        dl = c.dense_width // w.world
+        dl = w.plan.count(c.dense_width, UNIT)
         self.gu = torch.empty((rows, 2 * dl), dtype=bf, device=dev)
         self.act = torch.empty((rows, dl), dtype=bf, device=dev)
         self.xs_act = torch.empty((rows, dl // 64), dtype=f32, device=dev)
         # MoE
         slots = c.top_k + 1
-        ml = c.moe_width // w.world
+        ml = w.plan.count(c.moe_width, UNIT)
         self.mlog = torch.empty((rows, c.experts), dtype=f32, device=dev)
         self.pick = torch.empty((rows, slots), dtype=torch.int32, device=dev)
         self.wts = torch.empty((rows, slots), dtype=f32, device=dev)
@@ -110,7 +111,7 @@ class Buffers:
             self.exl3 = Exl3Scratch(shape, rows, slots, device=dev)
             self.ey = self.exl3.y.view(rows, slots, D)
         if bf16:                         # the shared expert as a BF16 MLP
-            sl = c.shared_width // w.world
+            sl = w.plan.count(c.shared_width, UNIT)
             self.sgu = torch.empty((rows, 2 * sl), dtype=bf, device=dev)
             self.sact = torch.empty((rows, sl), dtype=bf, device=dev)
             self.sxs = torch.empty((rows, sl // 64), dtype=f32, device=dev)
@@ -165,8 +166,8 @@ class State:
     def __init__(self, w: Weights, capacity: int, rows: int, *, kv: str = "bf16") -> None:
         c = w.cfg
         dev = w.device
-        HL = c.heads // w.world
-        LL = c.lin_heads // w.world
+        HL = w.plan.count(c.heads)
+        LL = w.plan.count(c.lin_heads)
         self.capacity = capacity
         self.pos = 0
         self.pos_dev = torch.zeros((1,), dtype=torch.int32, device=dev)

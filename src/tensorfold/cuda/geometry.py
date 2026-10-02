@@ -114,9 +114,28 @@ def indexed_weights(world: int, mtp: bool, mapped_tables: bool = True):
 ROUTED_EXPERT = re.compile(r"\.mlp\.experts\.\d+\.(gate|up|down)_proj\.weight$")
 
 
-def split_weights(rule, world: int = 2):
-    """GLM's rank of a checkpoint as loaded; ModelOpt NVFP4 projections as stored (a routed expert's fp32 scale held
-    per expert, a dense one's a number), the MTP layer's BF16 routed experts at the NVFP4 size they are packed to."""
+def split_units(units: int, world: int, rank: int) -> tuple[int, int]:
+    """First and end unit of rank ``rank``'s share of ``units`` whole units (heads, blocks of a width) over ``world``."""
+
+    if world != 2 or units % 2:
+        raise ValueError(f"{units} units do not split in halves over {world} ranks")
+    half = units // 2
+    return rank * half, (rank + 1) * half
+
+
+def _most(total: int, world: int, unit: int = 1) -> int:
+    """The largest rank's share (rank 0's) of ``total`` elements split over ``world`` ranks in whole ``unit``s."""
+
+    if total % unit:
+        raise ValueError(f"{total} elements are not whole units of {unit}")
+    first, end = split_units(total // unit, world, 0)
+    return (end - first) * unit
+
+
+def split_weights(rule, plan):
+    """GLM's rank (``plan``, the family's ``split.ShardPlan``) of a checkpoint as loaded; ModelOpt NVFP4 projections
+    as stored (a routed expert's fp32 scale held per expert, a dense one's a number), the MTP layer's BF16 routed
+    experts at the NVFP4 size they are packed to."""
 
     def transform(name: str, info: dict) -> tuple[int, int]:
         kind = rule(name)
@@ -125,11 +144,11 @@ def split_weights(rule, world: int = 2):
         shape = list(info["shape"])
         if not info.get("split") and kind != "rep":
             axis = {"row": 0, "col": -1, "dim1": 1}[kind]
-            if shape[axis] % world:
-                raise ValueError(f"checkpoint tensor does not split evenly: {name}")
-            shape[axis] //= world
-        if name.startswith("lm_head."):
-            shape[0] //= world
+            lo, hi = plan.cut(name, shape[axis])
+            shape[axis] = hi - lo
+        if name.startswith("lm_head."):                 # rank folders keep the whole head: the loader cuts it
+            lo, hi = plan.cut(name, shape[0])
+            shape[0] = hi - lo
         if info["dtype"] in ("U8", "F8_E4M3") and ".mlp.experts." not in name:
             shape[0] = -(-shape[0] // 128) * 128           # a dense NVFP4 projection's rows padded as ``qmm.pack`` pads
         if info["dtype"] == "BF16" and ROUTED_EXPERT.search(name):
@@ -287,7 +306,7 @@ def mla_cache_bytes(t: dict, world: int, capacity: int, *, latent: bool, mtp: bo
         cache = count * capacity * mla_row_bytes(int(t.get("kv_lora_rank", 512)), kv)
     else:
         kd = int(t["qk_nope_head_dim"]) + int(t.get("qk_rope_head_dim", 0))
-        heads = int(t["num_attention_heads"]) // world
+        heads = _most(int(t["num_attention_heads"]), world)
         cache = count * capacity * heads * (kd + int(t["v_head_dim"])) * 2
     return cache + count * (2 * capacity * index * 2 + (capacity // 4 + 2) * mla_row_bytes(index, kv))
 
@@ -298,8 +317,8 @@ def mla_geometry(t: dict, world: int, reserve: int, *, minimum_slots: int = 2560
     ``kv``: the latent cache's and pooled index keys' format (TF_GLM_KV, ``mla_cache_bytes``)."""
     linear, _ = layer_counts(t)
     lin = t.get("linear_attn_config") or {}
-    heads = int(t["num_attention_heads"]) // world
-    lh = int(lin.get("num_heads", t.get("linear_num_heads", 64))) // world
+    heads = _most(int(t["num_attention_heads"]), world)        # GLM splits heads and 64-wide blocks of widths
+    lh = _most(int(lin.get("num_heads", t.get("linear_num_heads", 64))), world)
     ld = int(lin.get("head_dim", t.get("linear_head_dim", 128)))
     conv = int(lin.get("short_conv_kernel_size", t.get("linear_conv_kernel_dim", 4)))
     kd = int(t["qk_nope_head_dim"]) + int(t.get("qk_rope_head_dim", 0))
@@ -310,13 +329,13 @@ def mla_geometry(t: dict, world: int, reserve: int, *, minimum_slots: int = 2560
     fixed += linear * rows * (3 * lh * ld + 2 * ld + lh) * 2
     fixed += linear * rows * lh * (12 * ld + 4)
     slots = int(t["num_experts_per_tok"]) + 1
-    width = int(t["moe_intermediate_size"]) // world
-    extent = d * streams + int(t["vocab_size"]) // world + slots * (d + width) + heads * (2 * kd + vd)
+    width, vocab = _most(int(t["moe_intermediate_size"]), world, 64), _most(int(t["vocab_size"]), world, 64)
+    extent = d * streams + vocab + slots * (d + width) + heads * (2 * kd + vd)
     extent += int(t.get("q_lora_rank", d)) * 2 + int(t.get("kv_lora_rank", d)) * 2
-    extent += int(t.get("intermediate_size", width)) * 3 // world + int(t.get("index_n_heads", 32)) * index
+    extent += 3 * _most(int(t.get("intermediate_size", width)), world, 64) + int(t.get("index_n_heads", 32)) * index
     fixed += (2 if mtp else 1) * (16 * rows * extent * 4 + 8 * rows * 16384 * 4)
     # prompt-chunk buffers: at most 5 row extents a row without the head
-    fixed += PREFILL_ROWS * 5 * (extent - int(t["vocab_size"]) // world)
+    fixed += PREFILL_ROWS * 5 * (extent - vocab)
     quant = (t.get("_quantization") or {}).get("quant_method")
     if quant == "exl3":
         # EXL3 experts' scratch (decode windows, the MTP head's, a prompt chunk)
@@ -343,7 +362,7 @@ def mla_geometry(t: dict, world: int, reserve: int, *, minimum_slots: int = 2560
 def mla_chunk_scratch(t: dict, world: int, capacity: int, *, latent: bool) -> int:
     """A prompt chunk's transient bytes: token selection (fp32 pool scores, chosen pools, token lists), then sparse attention's partials."""
 
-    heads, topk = int(t["num_attention_heads"]) // world, int(t.get("index_topk", 2048))
+    heads, topk = _most(int(t["num_attention_heads"]), world), int(t.get("index_topk", 2048))
     # the fp32 pool scores of at most MLA_SELECT_ROWS rows at once, the chosen pools and token lists of the chunk's
     select = min(PREFILL_ROWS, MLA_SELECT_ROWS) * 4 * ((capacity + 3) // 4) + PREFILL_ROWS * 16 * (topk + 3)
     if latent:
