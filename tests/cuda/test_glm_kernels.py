@@ -150,7 +150,7 @@ def test_kda_chain_serial_window_and_reference():
     P = (torch.randn((R, width), generator=gen) * 0.5).to(torch.bfloat16).cuda()
     A = (torch.randn((R, H * 128), generator=gen)).to(torch.bfloat16).cuda()
     G = (torch.randn((R, H * 128), generator=gen)).to(torch.bfloat16).cuda()
-    cw = (torch.randn((C, 4), generator=gen) * 0.3).to(torch.bfloat16).cuda()
+    cw = (torch.randn((C, 4), generator=gen) * 0.3).to(torch.bfloat16).float().cuda()
     cs0 = (torch.randn((3, C), generator=gen) * 0.5).to(torch.bfloat16).cuda()
     st0 = (torch.randn((H, 128, 128), generator=gen) * 0.05).cuda()
     a_log = torch.randn((H,), generator=gen).cuda()
@@ -386,7 +386,7 @@ def test_kda_wide_chain_gives_the_fused_chains_bits(rows, heads):
     a = torch.randn((rows, heads * kda.DK), generator=g).to(torch.bfloat16).cuda()
     gate = torch.randn((rows, heads * kda.DV), generator=g).to(torch.bfloat16).cuda()
     cs = (torch.randn((3, C), generator=g) * 0.5).to(torch.bfloat16).cuda()
-    cw = (torch.randn((C, 4), generator=g) * 0.5).to(torch.bfloat16).cuda()
+    cw = (torch.randn((C, 4), generator=g) * 0.5).to(torch.bfloat16).float().cuda()
     state = (torch.randn((heads, kda.DV, kda.DK), generator=g) * 0.1).cuda()
     a_log = (torch.rand(heads, generator=g) * 2 - 1).cuda()
     dt_bias = (torch.randn(heads * kda.DK, generator=g) * 0.1).cuda()
@@ -400,3 +400,36 @@ def test_kda_wide_chain_gives_the_fused_chains_bits(rows, heads):
         got.append((out, out_state, sc.k[:rows], sc.v[:rows], sc.g[:rows], sc.b[:rows]))
     for name, x, y in zip(("out", "state", "k", "v", "g", "beta"), *got):
         assert torch.equal(x, y), name
+
+
+@pytest.mark.parametrize("wide", [False, True])
+def test_kda_conv_taps_reach_the_kernels_in_fp32(wide):
+    """The KDA kernels take the conv taps in fp32 (NVIDIA's NVFP4 checkpoint stores them so): taps that bf16 cannot
+    hold change the output against the same taps rounded to bf16, and bf16 taps widened to fp32 are the old bits."""
+    from tensorfold.families.glm5_next.cuda import kda
+
+    g = torch.Generator().manual_seed(29)
+    heads, rows = 4, 8
+    C = 3 * heads * kda.DK
+    b_off = C + 256
+    p = (torch.randn((rows, b_off + heads + 32), generator=g) * 0.5).to(torch.bfloat16).cuda()
+    a = torch.randn((rows, heads * kda.DK), generator=g).to(torch.bfloat16).cuda()
+    gate = torch.randn((rows, heads * kda.DV), generator=g).to(torch.bfloat16).cuda()
+    cs = (torch.randn((3, C), generator=g) * 0.5).to(torch.bfloat16).cuda()
+    cw = (torch.randn((C, 4), generator=g) * 0.5).cuda()                       # fp32, mostly not bf16-representable
+    state = (torch.randn((heads, kda.DV, kda.DK), generator=g) * 0.1).cuda()
+    a_log = (torch.rand(heads, generator=g) * 2 - 1).cuda()
+    dt_bias = (torch.randn(heads * kda.DK, generator=g) * 0.1).cuda()
+    norm_w = (torch.rand(kda.DV, generator=g) + 0.5).to(torch.bfloat16).cuda()
+
+    def run(taps):
+        sc = kda.KDAScratch(rows, heads, "cuda")
+        return kda.chain(p, b_off, a, gate, cs, taps, state, a_log, dt_bias, norm_w, 1e-5, -5.0, rows, sc,
+                         torch.empty_like(state), wide=wide).clone()
+
+    rounded = cw.to(torch.bfloat16).float()
+    assert not torch.equal(cw, rounded)
+    assert not torch.equal(run(cw), run(rounded))
+    assert torch.equal(run(rounded), run(rounded.clone()))
+    with pytest.raises(RuntimeError, match="conv weight"):
+        run(cw.to(torch.bfloat16))
