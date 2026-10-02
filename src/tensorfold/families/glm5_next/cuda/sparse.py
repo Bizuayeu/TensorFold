@@ -194,6 +194,12 @@ def pool_bucket(pos: int, R: int, np_max: int) -> int:
     return min(np_max, max(1024, 1 << (visible - 1).bit_length()))
 
 
+# windows of SCORE_RB_FROM rows or more (prompt chunks) score SCORE_RB rows a program, each pool tile loaded once for
+# them (_scores: the same bits a row)
+SCORE_RB_FROM = 64
+SCORE_RB = 4
+
+
 def select_tokens(qi: torch.Tensor, wts: torch.Tensor, pk: torch.Tensor, pos: int | None, R: int, np_max: int,
                   pos_dev: torch.Tensor, *, bucket: int | None = None) -> tuple[torch.Tensor, torch.Tensor]:
     """Each row's attended tokens [R, 2051] ascending (-1 padded) and their count past the dense limit; ``bucket`` fixes the pool count for graphs."""
@@ -210,13 +216,15 @@ def select_tokens(qi: torch.Tensor, wts: torch.Tensor, pk: torch.Tensor, pos: in
     D = qi.shape[1] // H
     wscale = 1.0 / 5.656854249492381 if H == 32 else H ** -0.5            # 32 ** -0.5 exactly as before
     pkc, fp8 = kv8.view(pk)
+    rb = SCORE_RB if R >= SCORE_RB_FROM else 1
     blocks = []
     for a in range(0, R, B):
         n = min(B, R - a)
         at = pos_dev if a == 0 else pos_dev + a                        # the block's first row's position
-        _scores[(n, triton.cdiv(np_max, 64))](qi[a:a + n], wts[a:a + n], wts.stride(0), pkc, scores, at, n, np_max,
-                                             D ** -0.5, wscale, H=H, HP=max(16, triton.next_power_of_2(H)), D=D,
-                                             BP=64, RB=1, FP8=fp8, num_warps=4)
+        _scores[(triton.cdiv(n, rb), triton.cdiv(np_max, 64))](qi[a:a + n], wts[a:a + n], wts.stride(0), pkc, scores,
+                                                               at, n, np_max, D ** -0.5, wscale, H=H,
+                                                               HP=max(16, triton.next_power_of_2(H)), D=D, BP=64,
+                                                               RB=rb, FP8=fp8, num_warps=4)
         blocks.append(top_pools(scores[:n], TOPK_POOLS, at))                           # ascending pool index
     del scores
     pools = blocks[0] if len(blocks) == 1 else torch.cat(blocks)
