@@ -15,7 +15,7 @@ from tensorfold.cuda.exl3.experts import Scratch as Exl3Scratch
 from tensorfold.cuda.geometry import MLA_PROMPT_ATT_ROWS as PROMPT_ATT_ROWS   # a dense latent call's prompt rows
 from tensorfold.cuda.kernels import prefill_attention, qmm as shared
 
-from . import exl3_generic, glue, kda as kda_mod, latent, prof, qmm, sparse
+from . import KV_KINDS, exl3_generic, glue, kda as kda_mod, kv8, latent, prof, qmm, sparse
 from .attention import AttnScratch, attention, kv_write
 from .weights import LayerW, Weights
 
@@ -147,9 +147,10 @@ class Buffers:
 
 
 class State:
-    """Committed caches of one sequence (and of the MTP head's attention layer)."""
+    """Committed caches of one sequence (and of the MTP head's attention layer). ``kv`` (TF_GLM_KV): the latents' and
+    pooled index keys' format, bf16 or fp8 (``kv8``: a uint8 row a token / pool, with the latent cache only)."""
 
-    def __init__(self, w: Weights, capacity: int, rows: int) -> None:
+    def __init__(self, w: Weights, capacity: int, rows: int, *, kv: str = "bf16") -> None:
         c = w.cfg
         dev = w.device
         HL = c.heads // w.world
@@ -171,8 +172,16 @@ class State:
         self.scratch_set = kda_mod.KDAScratchSet(n, rows, LL, dev) if n else None
         self.scratch = self.scratch_set.views if n else []
         self.latent = latent.ENABLED
+        if kv not in KV_KINDS or (kv != "bf16" and not self.latent):
+            raise ValueError(f"TF_GLM_KV={kv}: bf16, or fp8 with the latent cache (TF_GLM_LATENT=1)")
+        self.kv = kv
+
+        def rows_of(n: int, width: int) -> torch.Tensor:
+            if kv == "fp8":          # e4m3 codes, an fp32 scale, pad (kv8)
+                return torch.zeros((n, width + kv8.PAD), dtype=torch.uint8, device=dev)
+            return torch.zeros((n, width), dtype=torch.bfloat16, device=dev)
         if self.latent:              # one 512-wide latent a token and layer (kc), no separate values (vc)
-            self.kc = [torch.zeros((capacity, c.kv_lora), dtype=torch.bfloat16, device=dev) for _ in dsa_layers]
+            self.kc = [rows_of(capacity, c.kv_lora) for _ in dsa_layers]
             self.vc = [None for _ in dsa_layers]
         else:
             self.kc = [torch.zeros((capacity, HL, c.qk_dim), dtype=torch.bfloat16, device=dev) for _ in dsa_layers]
@@ -181,7 +190,7 @@ class State:
         self.mtp_drafted = 0
         if w.mtp is not None:
             if self.latent:
-                self.mtp_kc = torch.zeros((capacity, c.kv_lora), dtype=torch.bfloat16, device=dev)
+                self.mtp_kc = rows_of(capacity, c.kv_lora)
                 self.mtp_vc = None
             else:
                 self.mtp_kc = torch.zeros((capacity, HL, c.qk_dim), dtype=torch.bfloat16, device=dev)
@@ -191,7 +200,7 @@ class State:
         if w.meta.get("long_context"):
             n_idx = len(dsa_layers) + (1 if w.mtp is not None else 0)
             mk = lambda n: torch.zeros((n, c.index_dim), dtype=torch.bfloat16, device=dev)   # noqa: E731
-            self.index = [(mk(capacity), mk(capacity), mk(capacity // 4 + 2)) for _ in range(n_idx)]
+            self.index = [(mk(capacity), mk(capacity), rows_of(capacity // 4 + 2, c.index_dim)) for _ in range(n_idx)]
 
     def reset(self) -> None:
         self.conv.zero_()

@@ -7,6 +7,7 @@ import triton
 import triton.language as tl
 
 from . import LATENT as ENABLED     # off (TF_GLM_LATENT=0): per-head keys and values, 0.3.5's path, for A/B
+from . import kv8                   # TF_GLM_KV=fp8: e4m3 rows with a power-of-two scale each (the kernels' FP8)
 
 L = 512            # GLM-5.3-Flash's latent width (kv_lora_rank); the kernels take the width from the tensors
 CHUNK = 512        # keys per chunk program, merged in absolute order
@@ -188,16 +189,24 @@ def expand_v(o_lat: torch.Tensor, a, out: torch.Tensor) -> torch.Tensor:
 # ------------------------------------------------------------------------------------------------ caches ---
 
 @triton.jit
-def _lat_write(LAT, lat_stride, LC, POS, LW: tl.constexpr):
+def _lat_write(LAT, lat_stride, LC, POS, LW: tl.constexpr, FP8: tl.constexpr = False):
     r = tl.program_id(0)
     P = tl.load(POS).to(tl.int64)
     k = tl.arange(0, LW)
-    tl.store(LC + (P + r) * LW + k, tl.load(LAT + r * lat_stride + k))
+    if FP8:                          # the bf16 row's codes and scale: a function of the row alone (kv8.store_row)
+        kv8.store_row(LC, P + r, tl.load(LAT + r * lat_stride + k).to(tl.float32), LW)
+    else:
+        tl.store(LC + (P + r) * LW + k, tl.load(LAT + r * lat_stride + k))
 
 
 def latent_write(lat: torch.Tensor, cache: torch.Tensor, pos: torch.Tensor) -> None:
-    """lat [R, latent] bf16 rows into cache slots pos .. pos + R - 1 (pos read on the device)."""
-    _lat_write[(lat.shape[0],)](lat, lat.stride(0), cache, pos, LW=cache.shape[1], num_warps=4)
+    """lat [R, latent] bf16 rows into cache slots pos .. pos + R - 1 (pos read on the device); an FP8 cache
+    (TF_GLM_KV=fp8) takes each row's e4m3 codes and power-of-two scale. Prompt chunks and decode windows both write
+    here, so a row's bytes never depend on the window it came in."""
+    lc, fp8 = kv8.view(cache)
+    if lat.shape[1] != kv8.width(cache):
+        raise ValueError(f"latent_write: rows of {lat.shape[1]} values into a cache of {kv8.width(cache)}")
+    _lat_write[(lat.shape[0],)](lat, lat.stride(0), lc, pos, LW=lat.shape[1], FP8=fp8, num_warps=4)
 
 
 # --------------------------------------------------------------------------------------------- attention ---
@@ -218,9 +227,28 @@ def _tile(q, kv, m, l, o, valid, SCALE: tl.constexpr):
 
 
 @triton.jit
+def _tile8(q, kv, ks, m, l, o, valid, SCALE: tl.constexpr):
+    """_tile on an FP8 cache's tile (TF_GLM_KV=fp8): kv its codes (exact in bf16), ks [KT] their power-of-two scales,
+    folded into the scores and the probabilities, which rounds nothing: _tile's values on the dequantized rows up to
+    the fp32 sums' order (the tensor cores take a converted tile in Triton's own layout). A row's bits still depend
+    on its query, its keys and the cache only."""
+    scores = tl.dot(q, tl.trans(kv)).to(tl.float32) * ks[None, :] * SCALE
+    scores = tl.where(valid[None, :], scores, float("-inf"))
+    tile_m = tl.max(scores, 1)
+    active = tile_m != float("-inf")
+    next_m = tl.where(active, tl.maximum(m, tile_m), m)
+    alpha = tl.where(active, tl.where(m == float("-inf"), 0.0, tl.exp(m - next_m)), 1.0)
+    p = tl.where(valid[None, :] & active[:, None], tl.exp(scores - next_m[:, None]), 0.0)
+    o = o * alpha[:, None] + tl.dot((p * ks[None, :]).to(tl.bfloat16), kv)
+    l = l * alpha + tl.sum(p, 1)
+    return next_m, l, o
+
+
+@triton.jit
 def _dense_chunks(QA, LC, POS, PO, PM, PL, R, H: tl.constexpr, LW: tl.constexpr, CH: tl.constexpr,
-                  SCALE: tl.constexpr, HBT: tl.constexpr, KTT: tl.constexpr):
-    """Program (row, head block, chunk): causal attention of HB heads of row r over keys [c CH, (c + 1) CH)."""
+                  SCALE: tl.constexpr, HBT: tl.constexpr, KTT: tl.constexpr, FP8: tl.constexpr = False):
+    """Program (row, head block, chunk): causal attention of HB heads of row r over keys [c CH, (c + 1) CH); FP8: LC
+    holds kv8 rows (_tile8)."""
     r = tl.program_id(0)
     hb = tl.program_id(1)
     c = tl.program_id(2)
@@ -238,8 +266,13 @@ def _dense_chunks(QA, LC, POS, PO, PM, PL, R, H: tl.constexpr, LW: tl.constexpr,
         for t in range(CH // KTT):
             ki = start + t * KTT + tl.arange(0, KTT)
             ok = ki <= limit
-            kv = tl.load(LC + ki[:, None].to(tl.int64) * LW + k[None, :], mask=ok[:, None], other=0).to(tl.bfloat16)
-            m, l, o = _tile(q, kv, m, l, o, ok, SCALE)
+            if FP8:
+                kv, ks = kv8.load_rows(LC, ki.to(tl.int64), ok, k, LW)
+                m, l, o = _tile8(q, kv, ks, m, l, o, ok, SCALE)
+            else:
+                kv = tl.load(LC + ki[:, None].to(tl.int64) * LW + k[None, :], mask=ok[:, None],
+                             other=0).to(tl.bfloat16)
+                m, l, o = _tile(q, kv, m, l, o, ok, SCALE)
     base = (c * R + r) * H + hh
     tl.store(PO + base[:, None] * LW + k[None, :], o, mask=hok[:, None])
     tl.store(PM + base, m, mask=hok)
@@ -248,8 +281,10 @@ def _dense_chunks(QA, LC, POS, PO, PM, PL, R, H: tl.constexpr, LW: tl.constexpr,
 
 @triton.jit
 def _sparse_chunks(QA, LC, TOK, CNT, PO, PM, PL, R, W: tl.constexpr, H: tl.constexpr, LW: tl.constexpr,
-                   CH: tl.constexpr, SCALE: tl.constexpr, HBT: tl.constexpr, KTT: tl.constexpr):
-    """Program (row, head block, chunk): HB heads of row r over its selected tokens [c CH, (c + 1) CH) in list order."""
+                   CH: tl.constexpr, SCALE: tl.constexpr, HBT: tl.constexpr, KTT: tl.constexpr,
+                   FP8: tl.constexpr = False):
+    """Program (row, head block, chunk): HB heads of row r over its selected tokens [c CH, (c + 1) CH) in list order;
+    FP8: LC holds kv8 rows (_tile8)."""
     r = tl.program_id(0)
     hb = tl.program_id(1)
     c = tl.program_id(2)
@@ -266,8 +301,12 @@ def _sparse_chunks(QA, LC, TOK, CNT, PO, PM, PL, R, W: tl.constexpr, H: tl.const
             idx = c * CH + t * KTT + tl.arange(0, KTT)
             ok = idx < n
             tok = tl.load(TOK + r * W + idx, mask=ok, other=0).to(tl.int64)
-            kv = tl.load(LC + tok[:, None] * LW + k[None, :], mask=ok[:, None], other=0).to(tl.bfloat16)
-            m, l, o = _tile(q, kv, m, l, o, ok, SCALE)
+            if FP8:
+                kv, ks = kv8.load_rows(LC, tok, ok, k, LW)
+                m, l, o = _tile8(q, kv, ks, m, l, o, ok, SCALE)
+            else:
+                kv = tl.load(LC + tok[:, None] * LW + k[None, :], mask=ok[:, None], other=0).to(tl.bfloat16)
+                m, l, o = _tile(q, kv, m, l, o, ok, SCALE)
     base = (c * R + r) * H + hh
     tl.store(PO + base[:, None] * LW + k[None, :], o, mask=hok[:, None])
     tl.store(PM + base, m, mask=hok)
@@ -315,6 +354,13 @@ class LatentScratch:
         self.dummy = torch.zeros((1,), dtype=torch.int32, device=device)
 
 
+def _cache(cache: torch.Tensor, lw: int) -> tuple[torch.Tensor, bool]:
+    """kv8.view of a latent cache whose rows must hold ``lw`` values (an FP8 cache's rows are wider)."""
+    if kv8.width(cache) != lw:
+        raise ValueError(f"latent attention: a cache of {kv8.width(cache)}-wide rows, queries {lw} wide")
+    return kv8.view(cache)
+
+
 def attention(qa: torch.Tensor, cache: torch.Tensor, pos: torch.Tensor, s: LatentScratch, *, scale: float,
               nch: int, out: torch.Tensor, hb: int | None = None) -> torch.Tensor:
     """Dense causal attention of qa [R, H, 512] through pos + R - 1 in nch 512-key chunks; a row ignores the others."""
@@ -326,8 +372,10 @@ def attention(qa: torch.Tensor, cache: torch.Tensor, pos: torch.Tensor, s: Laten
     hb = head_block(R) if hb is None else hb
     if hb not in (HB, HB_WIDE):
         raise ValueError(f"latent attention: {hb} heads a program, not {HB} or {HB_WIDE}")
-    _dense_chunks[(R, triton.cdiv(H, hb), nch)](qa, cache, pos, s.po[:n * LW], s.pm[:n], s.pl[:n], R, H=H, LW=LW,
-                                                CH=CHUNK, SCALE=scale, HBT=hb, KTT=KT, num_warps=8, num_stages=1)
+    lc, fp8 = _cache(cache, LW)
+    _dense_chunks[(R, triton.cdiv(H, hb), nch)](qa, lc, pos, s.po[:n * LW], s.pm[:n], s.pl[:n], R, H=H, LW=LW,
+                                                CH=CHUNK, SCALE=scale, HBT=hb, KTT=KT, FP8=fp8, num_warps=8,
+                                                num_stages=1)
     _merge[(R, H)](s.po, s.pm, s.pl, out, s.dummy, R, H=H, LW=LW, NCH=nch, SPARSE=False, num_warps=4)
     return out
 
@@ -343,8 +391,10 @@ def sparse_attention(qa: torch.Tensor, cache: torch.Tensor, tokens: torch.Tensor
     pm = torch.empty((n,), dtype=torch.float32, device=qa.device)
     pl = torch.empty((n,), dtype=torch.float32, device=qa.device)
     hb = head_block(R)
-    _sparse_chunks[(R, triton.cdiv(H, hb), nch)](qa, cache, tokens, counts, po, pm, pl, R, W=W, H=H, LW=LW,
-                                                 CH=CHUNK, SCALE=scale, HBT=hb, KTT=KT, num_warps=8, num_stages=1)
+    lc, fp8 = _cache(cache, LW)
+    _sparse_chunks[(R, triton.cdiv(H, hb), nch)](qa, lc, tokens, counts, po, pm, pl, R, W=W, H=H, LW=LW,
+                                                 CH=CHUNK, SCALE=scale, HBT=hb, KTT=KT, FP8=fp8, num_warps=8,
+                                                 num_stages=1)
     _merge[(R, H)](po, pm, pl, out, counts, R, H=H, LW=LW, NCH=nch, SPARSE=True, num_warps=4)
 
 

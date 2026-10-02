@@ -8,6 +8,8 @@ import triton.language as tl
 
 from tensorfold.cuda.geometry import MLA_SELECT_ROWS as SELECT_ROWS   # a prompt chunk's rows scored at once
 
+from . import kv8                   # TF_GLM_KV=fp8: pooled keys as e4m3 rows with a power-of-two scale each
+
 POOL = 4
 TOPK_POOLS = 512
 BR = 16
@@ -30,8 +32,9 @@ def _index_write(KR, k_stride, GR, LNW, LNB, IK, IG, POS, eps, D: tl.constexpr):
 
 
 @triton.jit
-def _pool_keys(IK, IG, APE, PK, POS, R, D: tl.constexpr):
-    """Program i: pool p = pos // 4 + i if it is complete within the window (ends at or before pos + R - 1)."""
+def _pool_keys(IK, IG, APE, PK, POS, R, D: tl.constexpr, FP8: tl.constexpr = False):
+    """Program i: pool p = pos // 4 + i if it is complete within the window (ends at or before pos + R - 1); FP8: the
+    pooled key stored as kv8.store_row's codes and scale (a function of the bf16 pool alone)."""
 
     i = tl.program_id(0)
     P = tl.load(POS).to(tl.int64)
@@ -57,22 +60,31 @@ def _pool_keys(IK, IG, APE, PK, POS, R, D: tl.constexpr):
     t1 = ((e1 / s).to(tl.bfloat16).to(tl.float32) * k1).to(tl.bfloat16).to(tl.float32)
     t2 = ((e2 / s).to(tl.bfloat16).to(tl.float32) * k2).to(tl.bfloat16).to(tl.float32)
     t3 = ((e3 / s).to(tl.bfloat16).to(tl.float32) * k3).to(tl.bfloat16).to(tl.float32)
-    tl.store(PK + p * D + d, (((t0 + t1) + t2) + t3).to(tl.bfloat16))
+    if FP8:
+        kv8.store_row(PK, p, ((t0 + t1) + t2) + t3, D)
+    else:
+        tl.store(PK + p * D + d, (((t0 + t1) + t2) + t3).to(tl.bfloat16))
 
 
 def index_update(k_raw: torch.Tensor, gate: torch.Tensor, ln_w: torch.Tensor, ln_b: torch.Tensor, ape: torch.Tensor,
                  ik: torch.Tensor, ig: torch.Tensor, pk: torch.Tensor, pos: torch.Tensor) -> None:
-    """Window rows' index keys and gates into the caches at pos.., then every pool the window completes."""
+    """Window rows' index keys and gates into the caches at pos.., then every pool the window completes (into pk:
+    bf16, or TF_GLM_KV=fp8's kv8 rows)."""
 
     R = k_raw.shape[0]
     _index_write[(R,)](k_raw, k_raw.stride(0), gate, ln_w, ln_b, ik, ig, pos, 1e-6, D=128, num_warps=1)
-    _pool_keys[(R // 4 + 2,)](ik, ig, ape, pk, pos, R, D=128, num_warps=1)
+    pkc, fp8 = kv8.view(pk)
+    if kv8.width(pk) != 128:
+        raise ValueError(f"index_update: pooled keys of {kv8.width(pk)} values, not 128")
+    _pool_keys[(R // 4 + 2,)](ik, ig, ape, pkc, pos, R, D=128, FP8=fp8, num_warps=1)
 
 
 @triton.jit
 def _scores(QI, W, w_stride, PK, OUT, POS, R, NP, scale, wscale, H: tl.constexpr, HP: tl.constexpr,
-            D: tl.constexpr, BP: tl.constexpr, RB: tl.constexpr):
-    """Program (RB rows, pool block): s_p = sum_h w_h relu(scale * qi_h . pool_p) up to each row's position, heads padded to HP; RB never changes a row's bits."""
+            D: tl.constexpr, BP: tl.constexpr, RB: tl.constexpr, FP8: tl.constexpr = False):
+    """Program (RB rows, pool block): s_p = sum_h w_h relu(scale * qi_h . pool_p) up to each row's position, heads padded to HP; RB never changes a row's bits.
+    FP8 (TF_GLM_KV=fp8): the pooled keys' e4m3 codes on the tensor cores and each pool's power-of-two scale on its
+    dots, which rounds nothing: the values of the bf16 pools they dequantize to."""
 
     rb = tl.program_id(0)
     pb = tl.program_id(1)
@@ -89,8 +101,11 @@ def _scores(QI, W, w_stride, PK, OUT, POS, R, NP, scale, wscale, H: tl.constexpr
     d = tl.arange(0, D)
     hh = tl.arange(0, HP)
     hok = hh < H
-    k = tl.load(PK + p[:, None] * D + d[None, :], mask=(p < (P + rb * RB + RB) // 4)[:, None],
-                other=0.0).to(tl.bfloat16)                                              # [BP, D]
+    if FP8:
+        k, ks = kv8.load_rows(PK, p.to(tl.int64), p < (P + rb * RB + RB) // 4, d, D)   # [BP, D], [BP]
+    else:
+        k = tl.load(PK + p[:, None] * D + d[None, :], mask=(p < (P + rb * RB + RB) // 4)[:, None],
+                    other=0.0).to(tl.bfloat16)                                          # [BP, D]
     for i in tl.static_range(RB):
         r = rb * RB + i
         if r < R:
@@ -98,6 +113,8 @@ def _scores(QI, W, w_stride, PK, OUT, POS, R, NP, scale, wscale, H: tl.constexpr
             q = tl.load(QI + (r * H + hh[:, None]) * D + d[None, :], mask=hok[:, None], other=0.0).to(tl.bfloat16)
             kr = tl.where((p < npool)[:, None], k, 0.0)
             dots = tl.dot(q, tl.trans(kr))                                                # [HP, BP] fp32
+            if FP8:
+                dots = dots * ks[None, :]
             w = tl.load(W + r * w_stride + hh, mask=hok, other=0.0).to(tl.float32) * wscale
             sc = tl.sum(w[:, None] * tl.maximum(dots * scale, 0.0), axis=0)
             sc = tl.where(p < npool, sc, float("-inf"))
@@ -192,13 +209,14 @@ def select_tokens(qi: torch.Tensor, wts: torch.Tensor, pk: torch.Tensor, pos: in
     H = wts.shape[1]
     D = qi.shape[1] // H
     wscale = 1.0 / 5.656854249492381 if H == 32 else H ** -0.5            # 32 ** -0.5 exactly as before
+    pkc, fp8 = kv8.view(pk)
     blocks = []
     for a in range(0, R, B):
         n = min(B, R - a)
         at = pos_dev if a == 0 else pos_dev + a                        # the block's first row's position
-        _scores[(n, triton.cdiv(np_max, 64))](qi[a:a + n], wts[a:a + n], wts.stride(0), pk, scores, at, n, np_max,
+        _scores[(n, triton.cdiv(np_max, 64))](qi[a:a + n], wts[a:a + n], wts.stride(0), pkc, scores, at, n, np_max,
                                              D ** -0.5, wscale, H=H, HP=max(16, triton.next_power_of_2(H)), D=D,
-                                             BP=64, RB=1, num_warps=4)
+                                             BP=64, RB=1, FP8=fp8, num_warps=4)
         blocks.append(top_pools(scores[:n], TOPK_POOLS, at))                           # ascending pool index
     del scores
     pools = blocks[0] if len(blocks) == 1 else torch.cat(blocks)

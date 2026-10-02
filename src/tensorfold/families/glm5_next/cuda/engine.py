@@ -134,8 +134,12 @@ class GlmEngine:
         cfg = Config.read(model_dir)
         # Without --context the window stays dense, attending every key without indexer work.
         explicit = context is not None if context_explicit is None else bool(context_explicit)
-        from . import LATENT
+        from . import KV_KINDS, LATENT, kv_kind
 
+        # TF_GLM_KV=fp8: the DSA latent cache and the indexer's pooled keys as e4m3 rows (``kv8``), half their bytes
+        self.kv = kv_kind()
+        if self.kv != "bf16" and not LATENT:
+            raise ValueError("TF_GLM_KV=fp8 holds the latent cache: it needs TF_GLM_LATENT=1")
         # TF_GLM_MTP off: the MTP layer's tensors, caches and buffers are neither loaded nor estimated
         self.mtp_on = mtp_head(drafter is not None, serial_only, cfg.mtp_layers)
         weights_estimate = split_weights(rule)
@@ -143,7 +147,7 @@ class GlmEngine:
             weights_estimate = without_mtp(weights_estimate, cfg.layers)
         self.capacity_plan = admit(model_dir, context if explicit else cfg.dense_limit, explicit, torch,
                                    lambda text: mla_geometry(text, 2, MAX_ROWS, minimum_slots=DENSE_CAPACITY,
-                                                             latent=LATENT, mtp=self.mtp_on),
+                                                             latent=LATENT, mtp=self.mtp_on, kv=self.kv),
                                    weights_estimate, rank=rank, world=2, gather=self._gather_ints,
                                    draft_dir=drafter, draft_weights=lambda d: dflash2_weights(d, 2),
                                    draft_geometry=lambda text: dflash2_geometry(text, 2, MAX_ROWS, ring=DRAFT_RING))
@@ -153,7 +157,7 @@ class GlmEngine:
         # both ranks must run the same calls: refuse to start when they were given different settings
         prefill_rows = PREFILL_ROWS if prefill_rows is None else int(prefill_rows)
         mine = [int(drafter is not None), capacity, int(long_context), int(serial_only), int(LATENT),
-                prefill_rows, int(self.mtp_on), int(DRAFT_RING)]
+                prefill_rows, int(self.mtp_on), int(DRAFT_RING), KV_KINDS.index(self.kv)]
         # other conversations' kept prompts get what the window leaves, at most TF_GLM_CACHE_GIB, the same on both ranks
         plan = self.capacity_plan
         wanted = int(float(os.environ.get("TF_GLM_CACHE_GIB", "3")) * 2 ** 30)
@@ -161,7 +165,7 @@ class GlmEngine:
         both = self._gather_ints(mine + [spare >> 20])
         if both[0][:-1] != both[1][:-1]:
             raise RuntimeError("the two ranks were started with different settings (draft model, context, drafts, "
-                               "TF_GLM_LATENT, TF_GLM_MTP, TF_GLM_DRAFT_RING): "
+                               "TF_GLM_LATENT, TF_GLM_MTP, TF_GLM_DRAFT_RING, TF_GLM_KV): "
                                f"rank 0 {both[0][:-1]}, rank 1 {both[1][:-1]}; pull the draft model on both machines "
                                "(or pass --drafter none to both) and give both the same flags")
         self.cache_bytes = min(both[0][-1], both[1][-1]) << 20
@@ -184,13 +188,17 @@ class GlmEngine:
             print("[tensorfold] the checkpoint's MTP head is not loaded (TF_GLM_MTP=" +
                   (os.environ.get("TF_GLM_MTP", "").strip() or MTP_DEFAULT) + "): " +
                   ("DFlash2 drafts every request" if drafter is not None else "--no-drafts"), flush=True)
+        if rank == 0 and self.kv != "bf16":
+            print("[tensorfold] TF_GLM_KV=fp8: the DSA latent cache and the indexer's pooled keys as e4m3 rows with a "
+                  "power-of-two scale each (lossy; drafted replies still equal serial ones)", flush=True)
         self.drafter = None
         if drafter is not None:
             from .dflash2 import Drafter
 
             self.drafter = Drafter(drafter, w, capacity=capacity, ring=DRAFT_RING)
         self.e = Engine(w, capacity=capacity, max_rows=MAX_ROWS, prefill_rows=prefill_rows, graphs=True, graph_rows=GRAPH_ROWS,
-                        long_context=long_context, taps=self.drafter.tap_layers if self.drafter is not None else ())
+                        long_context=long_context, taps=self.drafter.tap_layers if self.drafter is not None else (),
+                        kv=self.kv)
         if self.drafter is not None:
             self.drafter.capture()
         self.costs = self._calibrate()

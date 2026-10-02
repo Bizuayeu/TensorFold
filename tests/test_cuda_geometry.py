@@ -307,3 +307,62 @@ def test_flash_message_snapshot_budget_counts_actual_saved_tensors(world, mtp):
         low = geometry.indexed_stream_geometry(text, 2, 4, 2, mtp=mtp).bytes_at(32)
         high = geometry.indexed_stream_geometry(text, 2, 4, 8, mtp=mtp).bytes_at(32)
         assert high - low == 6 * saved
+
+
+# GLM-5.3-Flash's DSA shapes: 11 DSA layers among 44 (and the MTP layer), a 512-wide latent, 128-wide index keys
+GLM_FLASH = {"hidden_size": 4096, "num_attention_heads": 64, "num_hidden_layers": 44,
+             "layer_types": (["linear_attention"] * 3 + ["full_attention"]) * 11, "linear_num_heads": 64,
+             "qk_nope_head_dim": 256, "v_head_dim": 256, "vocab_size": 154880, "kv_lora_rank": 512,
+             "index_head_dim": 128, "moe_intermediate_size": 1024, "num_experts_per_tok": 8,
+             "num_nextn_predict_layers": 1}
+
+
+def test_mla_fp8_rows_take_codes_a_scale_and_pad():
+    """TF_GLM_KV=fp8 (families/glm5_next/cuda/kv8.py): a row of w values takes w + 16 bytes, bf16's 2 w."""
+    assert geometry.mla_row_bytes(512) == 1024 and geometry.mla_row_bytes(512, "fp8") == 528
+    assert geometry.mla_row_bytes(128) == 256 and geometry.mla_row_bytes(128, "fp8") == 144
+    with pytest.raises(ValueError, match="bf16 or fp8"):
+        geometry.mla_row_bytes(512, "int8")
+    with pytest.raises(ValueError, match="latent cache"):
+        geometry.mla_geometry(GLM_FLASH, 2, 8, latent=False, kv="fp8")
+
+
+@pytest.mark.parametrize("kv, per_token", [("bf16", 19200), ("fp8", 12912)])
+def test_mla_cache_bytes_a_token_on_glm_flash(kv, per_token):
+    """A token a rank on GLM-5.3-Flash (11 DSA layers and the MTP layer): latent 1,024 -> 528 bytes, pooled index
+    keys 64 -> 36 bytes (a 128-wide row a pool of 4), index keys and gates 512 bytes either way, all times 12."""
+    a, b = 1 << 18, (1 << 18) + 4096
+    grow = geometry.mla_cache_bytes(GLM_FLASH, 2, b, latent=True, kv=kv) - \
+        geometry.mla_cache_bytes(GLM_FLASH, 2, a, latent=True, kv=kv)
+    assert grow == (b - a) * per_token
+    rest = [geometry.mla_geometry(GLM_FLASH, 2, 8, latent=True, kv=k).bytes_at(a)
+            - geometry.mla_cache_bytes(GLM_FLASH, 2, a, latent=True, kv=k) for k in ("bf16", "fp8")]
+    assert rest[0] == rest[1] > 0                     # the estimate's other terms do not depend on the format
+
+
+@pytest.mark.torch
+@pytest.mark.parametrize("kv, latent", [("bf16", True), ("bf16", False), ("fp8", True)])
+@pytest.mark.parametrize("mtp", [False, True])
+def test_mla_cache_bytes_are_what_the_state_allocates(monkeypatch, allocations, mtp, latent, kv):
+    """The estimate's per-token caches (mla_cache_bytes, inside mla_geometry) are the bytes forward.State allocates
+    for them, bf16 or TF_GLM_KV=fp8: latents (or keys and values), the MTP layer's, index keys, gates, pooled keys."""
+    _, fake = allocations
+    mod = importlib.import_module("tensorfold.families.glm5_next.cuda.forward")
+    kda = importlib.import_module("tensorfold.families.glm5_next.cuda.kda")
+    cache = importlib.import_module("tensorfold.families.glm5_next.cuda.latent")
+    monkeypatch.setattr(mod, "torch", fake)
+    monkeypatch.setattr(kda, "torch", fake)
+    monkeypatch.setattr(cache, "ENABLED", latent)
+    text = {**GLM_FLASH, "layer_types": ["linear_attention", "full_attention"] * 2, "num_hidden_layers": 4,
+            "num_nextn_predict_layers": int(mtp)}
+    cfg = SimpleNamespace(heads=64, lin_heads=64, conv=4, qk_dim=256, v_dim=256, index_dim=128, kv_lora=512)
+    layers = [SimpleNamespace(index=i, kind="kda" if i % 2 == 0 else "dsa",
+                              kda=SimpleNamespace(proj=SimpleNamespace(n=8))) for i in range(4)]
+    weights = SimpleNamespace(cfg=cfg, world=2, device="cpu", layers=layers, meta={"long_context": True},
+                              mtp=SimpleNamespace() if mtp else None)
+    slots = 65536 + 12
+    st = mod.State(weights, slots, 8, kv=kv)
+    held = [x for x in st.kc + st.vc if x is not None] + [x for trio in st.index for x in trio]
+    held += [x for x in (getattr(st, "mtp_kc", None), getattr(st, "mtp_vc", None)) if x is not None]
+    assert bytes_in(held) == geometry.mla_cache_bytes(text, 2, slots, latent=latent, mtp=mtp, kv=kv)
+    assert all(x.dtype == ("uint8" if kv == "fp8" else "bf16") for x in st.kc + [st.index[0][2]])

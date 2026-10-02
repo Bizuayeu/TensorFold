@@ -84,7 +84,10 @@ class Engine:
 
     def __init__(self, w: Weights, *, capacity: int = 2560, max_rows: int = 8, prefill_rows: int = PREFILL_ROWS,
                  graphs: bool = False, graph_rows: tuple[int, ...] = (1, 2, 3, 4), long_context: bool = False,
-                 taps: tuple[int, ...] = ()) -> None:
+                 taps: tuple[int, ...] = (), kv: str | None = None) -> None:
+        """``kv``: the DSA caches' format (default TF_GLM_KV, bf16 unless set; ``kv8``)."""
+        from . import kv_kind
+
         self.w = w
         w.meta["long_context"] = long_context
         self.rows, self.prefill_rows = max_rows, prefill_rows
@@ -94,7 +97,7 @@ class Engine:
             self.buf.set_taps(tuple(taps), w.cfg.hidden)         # before any graph capture
             self.pbuf.set_taps(tuple(taps), w.cfg.hidden)
         self.mbuf = Buffers(w, max_rows, capacity) if w.mtp is not None else None
-        self.st = State(w, capacity, max_rows)
+        self.st = State(w, capacity, max_rows, kv=kv_kind() if kv is None else kv)
         self.last_hidden: torch.Tensor | None = None
         self.constraint = self.window = None            # a request's grammar, and the next sample's rows under it
         self.draft_n = w.head.n

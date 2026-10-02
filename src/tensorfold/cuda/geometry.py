@@ -251,10 +251,39 @@ def exl3_expert_scratch(rows: int, slots: int, d: int, width: int) -> int:
     return 2 * pairs * d * 2 + pairs * width * 2 + 2 * 4 * pairs * max(width, d) * 4
 
 
+def mla_row_bytes(width: int, kv: str = "bf16") -> int:
+    """A GLM DSA cache row of ``width`` values: bf16, or TF_GLM_KV=fp8's e4m3 codes, fp32 scale and 12 pad bytes
+    (families/glm5_next/cuda/kv8.py)."""
+    if kv not in ("bf16", "fp8"):
+        raise ValueError(f"a GLM DSA cache is bf16 or fp8, not {kv!r}")
+    return width + 16 if kv == "fp8" else 2 * width
+
+
+def mla_cache_bytes(t: dict, world: int, capacity: int, *, latent: bool, mtp: bool | None = None,
+                    kv: str = "bf16") -> int:
+    """GLM's per-token caches on a rank over ``capacity`` tokens (forward.State), per DSA layer and the MTP layer:
+    the latent (or per-head keys and values), index keys and gates (bf16) and pooled keys (a row a pool of 4, 2 rows
+    of pad); ``kv`` (TF_GLM_KV) is the latents' and pooled keys' format."""
+    if kv != "bf16" and not latent:
+        raise ValueError("TF_GLM_KV=fp8 needs the latent cache")
+    _, attention = layer_counts(t)
+    mtp = int(t.get("num_nextn_predict_layers", 0)) > 0 if mtp is None else bool(mtp)
+    count = attention + int(mtp)
+    index = int(t.get("index_head_dim", 128))
+    if latent:
+        cache = count * capacity * mla_row_bytes(int(t.get("kv_lora_rank", 512)), kv)
+    else:
+        kd = int(t["qk_nope_head_dim"]) + int(t.get("qk_rope_head_dim", 0))
+        heads = int(t["num_attention_heads"]) // world
+        cache = count * capacity * heads * (kd + int(t["v_head_dim"])) * 2
+    return cache + count * (2 * capacity * index * 2 + (capacity // 4 + 2) * mla_row_bytes(index, kv))
+
+
 def mla_geometry(t: dict, world: int, reserve: int, *, minimum_slots: int = 2560, latent: bool = False,
-                 mtp: bool | None = None) -> Geometry:
-    """GLM's engine; ``mtp``: whether it holds the MTP head's caches and buffers (None: when the checkpoint has one)."""
-    linear, attention = layer_counts(t)
+                 mtp: bool | None = None, kv: str = "bf16") -> Geometry:
+    """GLM's engine; ``mtp``: whether it holds the MTP head's caches and buffers (None: when the checkpoint has one);
+    ``kv``: the latent cache's and pooled index keys' format (TF_GLM_KV, ``mla_cache_bytes``)."""
+    linear, _ = layer_counts(t)
     lin = t.get("linear_attn_config") or {}
     heads = int(t["num_attention_heads"]) // world
     lh = int(lin.get("num_heads", t.get("linear_num_heads", 64))) // world
@@ -279,21 +308,18 @@ def mla_geometry(t: dict, world: int, reserve: int, *, minimum_slots: int = 2560
         # EXL3 experts' scratch (decode windows, the MTP head's, a prompt chunk) and the prompt's BF16 split-K partials
         fixed += (2 if mtp else 1) * exl3_expert_scratch(rows, slots, d, width)
         fixed += exl3_expert_scratch(PREFILL_ROWS, slots, d, width) + 8 * PREFILL_ROWS * 16384 * 4
-    count = attention + int(mtp)
     lw = int(t.get("kv_lora_rank", 512))
+    mla_cache_bytes(t, world, 0, latent=latent, kv=kv)          # a bad format fails here
     def bytes_at(capacity: int) -> int:
         scratch = mla_chunk_scratch(t, world, capacity, latent=latent)
         if latent:
-            # latent cache; a prompt chunk's partials (MLA_PROMPT_ATT_ROWS rows at a time) and absorbed rows (MTP's too)
-            cache = count * capacity * lw * 2
+            # a prompt chunk's partials (MLA_PROMPT_ATT_ROWS rows at a time) and absorbed rows (MTP's too)
             dense = min(capacity, minimum_slots) + PREFILL_ROWS
             scratch += (((dense + 511) // 512) * min(PREFILL_ROWS, MLA_PROMPT_ATT_ROWS) * heads * (lw + 2) * 4
                         + 4 * PREFILL_ROWS * heads * lw)
         else:
-            cache = count * capacity * heads * (kd + vd) * 2
             scratch += (2 if mtp else 1) * ((capacity + rows + 511) // 512) * rows * heads * (kd + 2) * 4
-        cache += count * (2 * capacity + capacity // 4 + 2) * index * 2
-        return fixed + cache + scratch
+        return fixed + mla_cache_bytes(t, world, capacity, latent=latent, mtp=mtp, kv=kv) + scratch
     return Geometry(bytes_at, reserve, minimum_slots)
 
 
