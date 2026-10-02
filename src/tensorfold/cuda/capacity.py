@@ -87,7 +87,13 @@ def config(model_dir: str | Path) -> dict:
     return text
 
 
-def headers(model_dir: str | Path, *, rank: int | None = None, files: list[Path] | None = None) -> dict:
+WORLD_KEY = "tensorfold_world"      # a rank file's header metadata: the rank count its folder was split for (none: 2)
+
+
+def headers(model_dir: str | Path, *, rank: int | None = None, files: list[Path] | None = None,
+            world: int | None = None) -> dict:
+    """Every tensor's header entry; with ``world``, a rank file split for another rank count is refused."""
+
     path = Path(model_dir)
     files = list(files or []) or (sorted(path.glob(f"*.rank{rank}.safetensors")) if rank is not None else [])
     if not files:
@@ -106,6 +112,10 @@ def headers(model_dir: str | Path, *, rank: int | None = None, files: list[Path]
             if not 0 < size <= 64 * 1024**2:
                 raise ValueError("invalid checkpoint tensor header size")
             entries = json.loads(stream.read(size))
+        found = int((entries.get("__metadata__") or {}).get(WORLD_KEY, 2))
+        if world is not None and ".rank" in file.name and found != world:
+            raise ValueError(f"{file.parent} was split for {found} ranks, not {world}: split the checkpoint again "
+                             f"with --world {world}")
         for name, info in entries.items():
             if name == "__metadata__":
                 continue
@@ -120,10 +130,10 @@ def headers(model_dir: str | Path, *, rank: int | None = None, files: list[Path]
 
 
 def estimate_weights(model_dir: str | Path, transform: Callable, *, rank: int | None = None,
-                     files: list[Path] | None = None) -> Weights:
+                     files: list[Path] | None = None, world: int | None = None) -> Weights:
     layers: dict[str, int] = {}
     resident = mapped = largest = 0
-    for name, info in headers(model_dir, rank=rank, files=files).items():
+    for name, info in headers(model_dir, rank=rank, files=files, world=world).items():
         size, host = transform(name, info)
         size, host = int(size), int(host)
         if min(size, host) < 0:
@@ -310,7 +320,7 @@ def admit(model_dir: str | Path, requested: int | None, explicit: bool | None, t
     try:
         text = config(model_dir)
         geometry = geometry(text) if callable(geometry) else geometry
-        weights = estimate_weights(model_dir, transform, rank=rank, files=files)
+        weights = estimate_weights(model_dir, transform, rank=rank, files=files, world=world)
         host_staging = weights.staging
         if extra_files:                      # files outside the index, same layout (Nemotron's MTP head, EXL3 tables)
             more = estimate_weights(model_dir, transform, files=list(extra_files))

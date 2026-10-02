@@ -13,6 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
+from tensorfold.cuda.capacity import WORLD_KEY
 from tensorfold.cuda.geometry import split_units
 
 ROW = (
@@ -191,9 +192,6 @@ def torch_dtype(dtype: str):
 
 def rank_files(model_dir: str | Path, rank: int) -> list[Path]:
     return sorted(Path(model_dir).glob(f"*.rank{rank}.safetensors"))
-
-
-WORLD_KEY = "tensorfold_world"      # a rank file's header metadata: how many ranks its folder's split is for
 
 
 def split_world(files: list[Path]) -> int:
