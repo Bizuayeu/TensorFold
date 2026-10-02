@@ -136,7 +136,7 @@ def _checkpoint(path, exl3: bool = False, mtp: bool = True, nvfp4: bool = False)
     p = L + "layers.0.self_attn."
     for x in "qkv":
         q4(p + f"{x}_proj", 256, D)
-        bf16(p + f"{x}_conv1d.weight", [256, 1, 4], 0.3)
+        (f32 if nvfp4 else bf16)(p + f"{x}_conv1d.weight", [256, 1, 4], 0.3)     # fp32 in NVIDIA's NVFP4 layout
     q4(p + "f_a_proj", 128, D)
     q4(p + "g_a_proj", 128, D)
     q4(p + "b_proj", 2, D)

@@ -85,11 +85,15 @@ def test_config_names_the_nvfp4_checkpoint(path, ranks):
     from tensorfold.families.glm5_next.cuda.weights import Config
 
     assert Config.read(path).quant == "nvfp4"
+    assert split.read_header(path / FILE)[0][f"{L}layers.0.self_attn.q_conv1d.weight"]["dtype"] == "F32"
     w = ranks[0]
     assert isinstance(w.layers[1].moe.experts, nvx.Experts4) and w.layers[1].moe.experts.limit == 10.0
     assert isinstance(w.layers[1].moe.shared.gu, B16)                          # the shared expert stays BF16
     assert all(isinstance(lin, Fp4Linear) for lin in (*w.layers[0].mlp.gu, w.layers[0].mlp.down))
     assert isinstance(w.layers[1].dsa.proj, B16) and isinstance(w.mtp.eh, B16) and isinstance(w.embed, torch.Tensor)
+    conv = torch.from_numpy(np.concatenate([_stored(path, f"{L}layers.0.self_attn.{x}_conv1d.weight")[:128]
+                                            for x in "qkv"])).reshape(-1, 4)
+    assert torch.equal(w.layers[0].kda.conv.cpu(), conv.to(torch.bfloat16))      # the fp32 taps, the kernels' bf16
 
 
 def test_routed_experts_are_the_checkpoints_values(path, ranks):
