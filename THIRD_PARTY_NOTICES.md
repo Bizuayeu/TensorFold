@@ -82,6 +82,12 @@ GLM-5.3-Flash-EXL3-2x-DGX-Sparks-TensorFold, patch 0038-glm-kv-fp8, Apache Licen
 kernels' scale and store helpers and the folding of each row's scale into the attention and index scores, rewritten
 onto TensorFold 0.6.1's single-sequence caches.
 
+GLM's pieced prompt exchanges (`families/glm5_next/cuda/overlap.py`, `TF_GLM_PREFILL_OVERLAP`) follow the idea of
+MiaAI-Lab's patches 0010-glm-hc-split and 0033-glm-prefill-overlap2 for TensorFold v0.6.0 (Apache License 2.0,
+`LICENSES/Apache-2.0.txt`): a prompt chunk's rank exchanges run on a second stream while the next rows' work goes on.
+No code is taken; this tree keeps the all-gather and pieces it by rows. The prompt pool scores' rows per program
+(`sparse.SCORE_RB`, 4) follow the default of their patch 0009-glm-prefill-kernels.
+
 ## Vendored code and weights
 
 `src/tensorfold/drafters/vendor/z_lab_dflash/model_mlx.py` is the unmodified `dflash/model_mlx.py` from

@@ -333,6 +333,31 @@ def test_prompt_chunks_leave_the_same_state(engine):
     assert float(torch.nn.functional.cosine_similarity(logits, last, dim=1)) > 0.999
 
 
+@pytest.mark.parametrize("pieces", ["2", "16"])
+def test_pieced_exchanges_leave_the_unpieced_bits(engine_f, monkeypatch, pieces):
+    """TF_GLM_PREFILL_OVERLAP: a prompt chunk's exchanges in row pieces on a second stream leave the unpieced chunk's
+    states, DFlash2 taps, hidden rows and first token bit for bit."""
+
+    from tensorfold.families.glm5_next.cuda.decode import Engine, prefill
+
+    prompt = [int(t) for t in np.random.default_rng(33).integers(0, 1000, size=1024)]
+    runs = []
+    for on in ("0", "1"):
+        monkeypatch.setenv("TF_GLM_PREFILL_OVERLAP", on)
+        monkeypatch.setenv("TF_GLM_OVERLAP_PIECES", pieces)
+        e = Engine(engine_f.w, capacity=2560, max_rows=8, prefill_rows=1024, taps=engine_f.drafter.tap_layers)
+        first = prefill(e, prompt, None)
+        if on == "1":                                          # 512-row pieces, or 128-row ones (8, not 16)
+            assert [hi - lo for lo, hi in e.pbuf.overlap.cut] == [1024 // min(int(pieces), 8)] * min(int(pieces), 8)
+        else:
+            assert e.pbuf.overlap is None
+        runs.append((first, [t.clone() for t in _state(e)] + [t[:1024].clone() for t in e.pbuf.taps]
+                     + [e.pbuf.hidden[:1024].clone()]))
+        del e
+    (a, want), (b, got) = runs
+    assert a == b and len(want) == len(got) and all(torch.equal(x, y) for x, y in zip(want, got))
+
+
 @pytest.mark.parametrize("sampling", [Sampling(1234, 1.0, 20, 0.95), Sampling(1234, 1.0, 20, 0.95, 0.1),
                                       Sampling(1234, 1.0, 0, 0.9, 0.02), None],
                          ids=["sampled", "min_p", "nucleus", "greedy"])

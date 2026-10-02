@@ -1,4 +1,6 @@
-"""TF_GLM_PROFILE=1: time (with device syncs) and memory of each block kind of every prompt chunk, printed after each prefill; never inside decode or capture."""
+"""TF_GLM_PROFILE=1: time (with syncs of the current stream) and memory of each block kind of every prompt chunk,
+printed after each prefill; never inside decode or capture. A pieced chunk's all-gathers run on a second stream
+(``overlap``), so their time shows as "hc: exchange wait": what the main stream still waits for."""
 
 from __future__ import annotations
 
@@ -19,12 +21,13 @@ def timed(name: str):
     if not (ENABLED and active):
         yield
         return
-    torch.cuda.synchronize()
+    stream = torch.cuda.current_stream()
+    stream.synchronize()
     before = torch.cuda.memory_allocated()
     torch.cuda.reset_peak_memory_stats()
     t = time.perf_counter()
     yield
-    torch.cuda.synchronize()
+    stream.synchronize()
     totals[name] = totals.get(name, 0.0) + time.perf_counter() - t
     peaks[name] = max(peaks.get(name, 0), torch.cuda.max_memory_allocated() - before)
 
