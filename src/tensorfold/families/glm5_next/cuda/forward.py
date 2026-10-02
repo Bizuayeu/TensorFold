@@ -17,7 +17,7 @@ from tensorfold.cuda.kernels import prefill_attention, qmm as shared
 from tensorfold.cuda.nvfp4 import experts as nvx
 from tensorfold.cuda.nvfp4.linear import Fp4Linear
 
-from . import KV_KINDS, exl3_generic, glue, kda as kda_mod, kv8, latent, prof, qmm, sparse
+from . import KV_KINDS, exl3_generic, glue, kda as kda_mod, kv8, latent, overlap, prof, qmm, sparse
 from .attention import AttnScratch, attention, kv_write
 from .weights import LayerW, Weights
 
@@ -135,6 +135,12 @@ class Buffers:
         self.tap_at: dict[int, list[int]] = {}
         self.experts = c.experts
         self.top_k = c.top_k
+        # a prompt buffer's exchanges in row pieces on a second stream (TF_GLM_PREFILL_OVERLAP, ``overlap``)
+        self.overlap = None
+        if prefill and w.world > 1:
+            on, pieces = overlap.settings()
+            if on:
+                self.overlap = overlap.Overlap(w, self, pieces)
 
     def set_taps(self, layers: tuple[int, ...], hidden: int) -> None:
         self.tap_at = {}
@@ -268,9 +274,27 @@ def mm(b: Buffers, x: torch.Tensor, q, xs: torch.Tensor | None, out: torch.Tenso
     return qmm.matmul(x, q, xs, out=out, f32=f32, part=b.sk)
 
 
-def out_proj(w: Weights, b: Buffers, x: torch.Tensor, q: qmm.Q4, xs: torch.Tensor, R: int) -> torch.Tensor:
-    mm(b, x, q, xs, b.part[:R], f32=True)
-    return gather(w, b, R)
+def partials(w: Weights, b: Buffers, R: int, fill, site: str) -> torch.Tensor | None:
+    """``fill(lo, hi)`` writes rows lo .. hi of this rank's fp32 partial b.part; returns every rank's partials
+    [world, R, D] (``gather``), or None in a pieced prompt chunk, whose glue takes them piece by piece (``overlap``)."""
+
+    ov = b.overlap
+    if ov is not None and ov.active:
+        with prof.timed(f"{site}: out"):
+            ov.partials(fill)
+        return None
+    with prof.timed(f"{site}: out"):
+        fill(0, R)
+    with prof.timed(f"{site}: all-gather"):
+        return gather(w, b, R)
+
+
+def out_proj(w: Weights, b: Buffers, x: torch.Tensor, q: qmm.Q4, xs: torch.Tensor | None, R: int,
+             site: str) -> torch.Tensor | None:
+    def fill(lo: int, hi: int) -> None:          # rows are independent: any row range gives the same bits
+        mm(b, x[lo:hi], q, None if xs is None else xs[lo:hi], b.part[lo:hi], f32=True)
+
+    return partials(w, b, R, fill, site)
 
 
 def kda_block(layer: LayerW, w: Weights, st: State, b: Buffers, R: int, cut: Cut | None = None) -> torch.Tensor:
@@ -278,17 +302,19 @@ def kda_block(layer: LayerW, w: Weights, st: State, b: Buffers, R: int, cut: Cut
     k = layer.kda
     li = st.kda_index[layer.index]
     p = b.kproj[0, :R] if b.prefill else st.proj[li, :R]
-    mm(b, b.normed[:R], k.proj, b.xs[:R], p)
-    fa = p[:, k.fa_off:k.fa_off + 128]
-    ga = p[:, k.ga_off:k.ga_off + 128]
     pre = b.prefill
-    mm(b, fa, k.fb, None if pre else qmm.group_sums(fa, b.xs_fa[:R]), b.ka[:R])
-    mm(b, ga, k.gb, None if pre else qmm.group_sums(ga, b.xs_ga[:R]), b.kg[:R])
+    with prof.timed("kda: proj"):
+        mm(b, b.normed[:R], k.proj, b.xs[:R], p)
+        fa = p[:, k.fa_off:k.fa_off + 128]
+        ga = p[:, k.ga_off:k.ga_off + 128]
+        mm(b, fa, k.fb, None if pre else qmm.group_sums(fa, b.xs_fa[:R]), b.ka[:R])
+        mm(b, ga, k.gb, None if pre else qmm.group_sums(ga, b.xs_ga[:R]), b.kg[:R])
     cur = st.cur[li]
     if cut is None:
-        out = kda_mod.chain(p, k.b_off, b.ka[:R], b.kg[:R], st.conv[li], k.conv, st.rec[cur, li], k.a_log,
-                            k.dt_bias, k.norm, c.eps, c.lower, R, b.kscratch if pre else st.scratch[li],
-                            st.rec[1 - cur, li])
+        with prof.timed("kda: chain"):
+            out = kda_mod.chain(p, k.b_off, b.ka[:R], b.kg[:R], st.conv[li], k.conv, st.rec[cur, li], k.a_log,
+                                k.dt_bias, k.norm, c.eps, c.lower, R, b.kscratch if pre else st.scratch[li],
+                                st.rec[1 - cur, li])
     else:
         n = cut.point
         first = kda_mod.chain(p[:n], k.b_off, b.ka[:n], b.kg[:n], st.conv[li], k.conv, st.rec[cur, li],
@@ -300,7 +326,7 @@ def kda_block(layer: LayerW, w: Weights, st: State, b: Buffers, R: int, cut: Cut
     if pre:                              # a prompt chunk keeps every row: the layer commits now
         st.cur[li] = 1 - cur
         _shift_conv(st.conv[li:li + 1], b.kproj[:, :R], R)
-    return out_proj(w, b, out, k.o, None if pre else qmm.group_sums(out, b.kxs[:R]), R)
+    return out_proj(w, b, out, k.o, None if pre else qmm.group_sums(out, b.kxs[:R]), R, "kda")
 
 
 def dsa_block(layer: LayerW, w: Weights, kc: torch.Tensor, vc: torch.Tensor, pos_dev: torch.Tensor, b: Buffers,
@@ -341,7 +367,7 @@ def dsa_block(layer: LayerW, w: Weights, kc: torch.Tensor, vc: torch.Tensor, pos
                                               pk.shape[0] - 2, pos_dev)
         sparse.sparse_attention(b.q[:R], kc, vc, tokens, counts, o, c.qk_dim ** -0.5)
     o = o.view(R, HL * c.v_dim)
-    return out_proj(w, b, o, a.o, None if b.prefill else qmm.group_sums(o, b.xs_ao[:R]), R)
+    return out_proj(w, b, o, a.o, None if b.prefill else qmm.group_sums(o, b.xs_ao[:R]), R, "dsa")
 
 
 def dense_attention(qa: torch.Tensor, lc: torch.Tensor, pos_dev: torch.Tensor, s: latent.LatentScratch, *,
@@ -395,7 +421,7 @@ def _dsa_latent(a, w: Weights, lc: torch.Tensor, pos_dev: torch.Tensor, b: Buffe
             latent.sparse_attention(qa, lc, tokens, counts, ol, scale)
     with prof.timed("dsa: expand"):
         o = latent.expand_v(ol, a.absorb, b.vn[:R]).view(R, HL * c.v_dim)
-    return out_proj(w, b, o, a.o, qmm.group_sums(o, b.xs_ao[:R]), R)
+    return out_proj(w, b, o, a.o, qmm.group_sums(o, b.xs_ao[:R]), R, "dsa")
 
 
 def mlp_block(layer: LayerW, w: Weights, b: Buffers, R: int) -> torch.Tensor:
@@ -406,17 +432,17 @@ def mlp_block(layer: LayerW, w: Weights, b: Buffers, R: int) -> torch.Tensor:
     else:
         mm(b, b.normed[:R], m.gu, b.xs[:R], b.gu[:R])
     glue.swiglu(b.gu[:R], b.act[:R], b.xs_act[:R], w.cfg.limit)
-    return out_proj(w, b, b.act[:R], m.down, b.xs_act[:R], R)
+    return out_proj(w, b, b.act[:R], m.down, b.xs_act[:R], R, "mlp")
 
 
-def shared_expert(m, w: Weights, b: Buffers, R: int) -> None:
-    """The BF16 shared expert (EXL3 and NVFP4 checkpoints) into each row's last slot."""
+def shared_expert(m, w: Weights, b: Buffers, lo: int, hi: int) -> None:
+    """The BF16 shared expert (EXL3 and NVFP4 checkpoints) of rows lo .. hi into each row's last slot."""
 
     c, s = w.cfg, m.shared
-    mm(b, b.normed[:R], s.gu, b.xs[:R], b.sgu[:R])
-    glue.swiglu(b.sgu[:R], b.sact[:R], b.sxs[:R], c.limit)
-    mm(b, b.sact[:R], s.down, b.sxs[:R], b.sy[:R], f32=True)
-    b.ey[:R, c.top_k].copy_(b.sy[:R])
+    mm(b, b.normed[lo:hi], s.gu, b.xs[lo:hi], b.sgu[lo:hi])
+    glue.swiglu(b.sgu[lo:hi], b.sact[lo:hi], b.sxs[lo:hi], c.limit)
+    mm(b, b.sact[lo:hi], s.down, b.sxs[lo:hi], b.sy[lo:hi], f32=True)
+    b.ey[lo:hi, c.top_k].copy_(b.sy[lo:hi])
 
 
 def moe_block(layer: LayerW, w: Weights, b: Buffers, R: int) -> torch.Tensor:
@@ -438,51 +464,102 @@ def moe_block(layer: LayerW, w: Weights, b: Buffers, R: int) -> torch.Tensor:
             gate_up(b.normed[:R], m.experts, b.plan, b.eact, R, skip=c.experts)
         with prof.timed("moe: down"):
             down(b.eact, m.experts, b.plan, b.ey.view(-1, c.hidden), R, skip=c.experts)
-        with prof.timed("moe: shared"):
-            shared_expert(m, w, b, R)
-        with prof.timed("moe: combine"):
-            glue.combine(b.ey[:R], b.wts[:R], b.part[:R])
-        with prof.timed("moe: all-gather"):
-            return gather(w, b, R)
-    if m.shared is not None:
+    elif m.shared is not None:
         # EXL3: the routed slots through the trellis kernels, the shared expert (last slot) through BF16 matmuls
         exl3_generic.routed(b.normed[:R], b.pick, m.experts, b.exl3, R, c.limit)
-        shared_expert(m, w, b, R)
-        glue.combine(b.ey[:R], b.wts[:R], b.part[:R])
-        return gather(w, b, R)
-    with prof.timed("moe: gate/up"):
-        grouped.gate_up(b.normed[:R], m.experts, b.plan, b.eact, R)
-    with prof.timed("moe: down"):
-        grouped.down(b.eact, m.experts, b.plan, b.ey.view(-1, c.hidden), R)
-    with prof.timed("moe: combine"):
-        glue.combine(b.ey[:R], b.wts[:R], b.part[:R])
-    with prof.timed("moe: all-gather"):
-        return gather(w, b, R)
+    else:
+        with prof.timed("moe: gate/up"):
+            grouped.gate_up(b.normed[:R], m.experts, b.plan, b.eact, R)
+        with prof.timed("moe: down"):
+            grouped.down(b.eact, m.experts, b.plan, b.ey.view(-1, c.hidden), R)
+
+    def fill(lo: int, hi: int) -> None:          # the shared expert and the weighted sum keep rows apart
+        if m.shared is not None:
+            with prof.timed("moe: shared"):
+                shared_expert(m, w, b, lo, hi)
+        with prof.timed("moe: combine"):
+            glue.combine(b.ey[lo:hi], b.wts[lo:hi], b.part[lo:hi])
+
+    return partials(w, b, R, fill, "moe")
+
+
+def _mixer(layer: LayerW, w: Weights, st: State, b: Buffers, R: int, nch: int | None, host_pos: int | None,
+           sparse_np: int | None, cut: Cut | None) -> torch.Tensor | None:
+    """The layer's KDA or DSA block on b.normed: every rank's partials, or None in a pieced chunk (``partials``)."""
+
+    if layer.kind == "kda":
+        with prof.timed("kda"):
+            return kda_block(layer, w, st, b, R, cut)
+    di = st.dsa_index[layer.index]
+    with prof.timed("dsa (total)"):
+        return dsa_block(layer, w, st.kc[di], st.vc[di], st.pos_dev, b, R, nch,
+                         st.index[di] if st.index is not None else None, host_pos, sparse_np)
+
+
+def _ffn(layer: LayerW, w: Weights, b: Buffers, R: int) -> torch.Tensor | None:
+    with prof.timed("moe (total)" if layer.mlp is None else "mlp"):
+        return mlp_block(layer, w, b, R) if layer.mlp is not None else moe_block(layer, w, b, R)
+
+
+def _pre(w: Weights, b: Buffers, lo: int, hi: int, hc, norm: torch.Tensor) -> None:
+    """hc_pre of rows lo .. hi: b.normed, b.xs, b.post, b.comb of those rows from their streams."""
+
+    c = w.cfg
+    glue.hc_pre(b.x[lo:hi], hc.fn, hc.base, hc.scale, norm, b.normed[lo:hi], b.xs[lo:hi], b.post[lo:hi],
+                b.comb[lo:hi], b.hcpart[lo:hi], c.eps, c.hc_eps, c.hc_iters)
 
 
 def layer_forward(layer: LayerW, w: Weights, st: State, b: Buffers, R: int, nch: int | None = None,
                   host_pos: int | None = None, sparse_np: int | None = None, cut: Cut | None = None) -> None:
-    c = w.cfg
     x = b.x[:R]
-    h = layer.attn_hc
-    glue.hc_pre(x, h.fn, h.base, h.scale, layer.in_norm, b.normed[:R], b.xs[:R], b.post[:R], b.comb[:R],
-                b.hcpart[:R], c.eps, c.hc_eps, c.hc_iters)
-    if layer.kind == "kda":
-        with prof.timed("kda"):
-            g = kda_block(layer, w, st, b, R, cut)
-    else:
-        di = st.dsa_index[layer.index]
-        with prof.timed("dsa (total)"):
-            g = dsa_block(layer, w, st.kc[di], st.vc[di], st.pos_dev, b, R, nch,
-                          st.index[di] if st.index is not None else None, host_pos, sparse_np)
+    with prof.timed("hc (layer ends)"):
+        _pre(w, b, 0, R, layer.attn_hc, layer.in_norm)
+    g = _mixer(layer, w, st, b, R, nch, host_pos, sparse_np, cut)
     with prof.timed("hc"):
         glue.hc_post(x, x, g, b.post[:R], b.comb[:R])
-        h = layer.ffn_hc
-        glue.hc_pre(x, h.fn, h.base, h.scale, layer.post_norm, b.normed[:R], b.xs[:R], b.post[:R], b.comb[:R],
-                    b.hcpart[:R], c.eps, c.hc_eps, c.hc_iters)
-    with prof.timed("moe (total)" if layer.mlp is None else "mlp"):
-        g = mlp_block(layer, w, b, R) if layer.mlp is not None else moe_block(layer, w, b, R)
-    glue.hc_post(x, x, g, b.post[:R], b.comb[:R])
+        _pre(w, b, 0, R, layer.ffn_hc, layer.post_norm)
+    g = _ffn(layer, w, b, R)
+    with prof.timed("hc (layer ends)"):
+        glue.hc_post(x, x, g, b.post[:R], b.comb[:R])
+
+
+def pieced_layers(w: Weights, st: State, b: Buffers, R: int, nch: int | None, host_pos: int | None,
+                  cut: Cut | None) -> None:
+    """Every layer of a prompt chunk with its exchanges in row pieces (``overlap``, begun): each piece's hc_post,
+    DFlash2 taps, final stream mean and next hc_pre once its gather is in. The unpieced loop's kernels on the same
+    rows, so its bits, taps and b.hidden[:R]."""
+
+    layers = w.layers
+    ov = b.overlap
+    try:
+        with prof.timed("hc (layer ends)"):
+            _pre(w, b, 0, R, layers[0].attn_hc, layers[0].in_norm)
+        for i, layer in enumerate(layers):
+            nxt = layers[i + 1] if i + 1 < len(layers) else None
+
+            def mid(lo: int, hi: int, g: torch.Tensor, layer=layer) -> None:
+                x = b.x[lo:hi]
+                glue.hc_post(x, x, g, b.post[lo:hi], b.comb[lo:hi])
+                _pre(w, b, lo, hi, layer.ffn_hc, layer.post_norm)
+
+            def end(lo: int, hi: int, g: torch.Tensor, layer=layer, nxt=nxt) -> None:
+                x = b.x[lo:hi]
+                glue.hc_post(x, x, g, b.post[lo:hi], b.comb[lo:hi])
+                for slot in b.tap_at.get(layer.index, ()):
+                    glue.stream_mean(x, b.taps[slot][lo:hi])
+                if nxt is not None:
+                    _pre(w, b, lo, hi, nxt.attn_hc, nxt.in_norm)
+                else:
+                    glue.stream_mean(x, b.hidden[lo:hi])
+
+            _mixer(layer, w, st, b, R, nch, host_pos, None, cut)
+            with prof.timed("hc"):
+                ov.glue(mid)
+            _ffn(layer, w, b, R)
+            with prof.timed("hc (layer ends)"):
+                ov.glue(end)
+    finally:
+        ov.finish()
 
 
 def check_room(w: Weights, st: State, R: int, pos: int | None = None) -> None:
@@ -516,11 +593,14 @@ def compute(w: Weights, st: State, b: Buffers, R: int, *, logits: bool = True, n
         raise ValueError("a prompt cut must lie inside a prefill chunk")
     c = w.cfg
     glue.embed(b.ids[:R], w.embed, c.hidden, c.streams, b.x[:R])
-    for layer in w.layers:
-        layer_forward(layer, w, st, b, R, nch, host_pos, sparse_np, cut)
-        for slot in b.tap_at.get(layer.index, ()):
-            glue.stream_mean(b.x[:R], b.taps[slot][:R])
-    glue.stream_mean(b.x[:R], b.hidden[:R])
+    if b.overlap is not None and sparse_np is None and b.overlap.begin(R):
+        pieced_layers(w, st, b, R, nch, host_pos, cut)             # also the taps and b.hidden[:R]
+    else:
+        for layer in w.layers:
+            layer_forward(layer, w, st, b, R, nch, host_pos, sparse_np, cut)
+            for slot in b.tap_at.get(layer.index, ()):
+                glue.stream_mean(b.x[:R], b.taps[slot][:R])
+        glue.stream_mean(b.x[:R], b.hidden[:R])
     if not logits:
         return None
     glue.rmsnorm(b.hidden[:R], w.norm, c.eps, b.fnormed[:R], b.fxs[:R])
