@@ -61,3 +61,29 @@ class TokenBytes:
                              "top_logprobs": [{**self.token(token), "logprob": value}
                                              for token, value in row["top"]]}
                             for row in rows if row["id"] not in ends]}
+
+
+def prompt_probability_options(body: dict[str, Any], *, supported: bool = False) -> int | None:
+    """vLLM's ``prompt_logprobs``: the top entries each prompt position lists beside its own token, or None."""
+
+    top = body.get("prompt_logprobs")
+    if top is None:
+        return None
+    if isinstance(top, bool) or not isinstance(top, int) or not 0 <= top <= 20:   # the top_logprobs bound
+        raise RequestError("prompt_logprobs must be an integer between 0 and 20, or null")
+    if not supported:
+        raise RequestError("prompt_logprobs are not supported by this model or backend")
+    return top
+
+
+def prompt_entries(rows, decode) -> list:
+    """vLLM's completions ``prompt_logprobs``: None for the first token, then token id strings to {logprob, rank,
+    decoded_token}: the prompt's token first, ranked in the vocabulary, then the top entries ranked by position."""
+
+    out: list = [None]
+    for row in rows:
+        entry = {str(row["id"]): {"logprob": row["logprob"], "rank": row["rank"], "decoded_token": decode(row["id"])}}
+        for rank, (token, value) in enumerate(row["top"], start=1):
+            entry[str(token)] = {"logprob": value, "rank": rank, "decoded_token": decode(token)}
+        out.append(entry)
+    return out

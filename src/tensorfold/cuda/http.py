@@ -240,6 +240,8 @@ def make_handler(app: App):
                 payload = {"id": rid, "object": "text_completion", "created": created, "model": model,
                            "choices": [{"index": 0, "text": result["content"], "finish_reason": result["finish"]}],
                            "usage": usage, "tensorfold": result["stats"]}
+                if "prompt_logprobs" in result:              # vLLM's completions field, in the choice
+                    payload["choices"][0]["prompt_logprobs"] = result["prompt_logprobs"]
             if result.get("stop_sequence") is not None:
                 payload["stop_sequence"] = result["stop_sequence"]
             self._json(200, payload)
