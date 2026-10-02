@@ -39,7 +39,7 @@ RUN = 128 << 20          # most bytes one read of neighbouring tensors takes (``
 GAP = 1 << 20            # most unused bytes such a read spans between two tensors (more reads other layers twice)
 READERS = 8              # reads in flight: past this the layers are built slower than they are read
 DTYPE_BYTES = {"U32": 4, "I32": 4, "F32": 4, "BF16": 2, "F16": 2, "I16": 2, "U16": 2, "U8": 1, "I8": 1, "I64": 8,
-               "F64": 8}
+               "F64": 8, "F8_E4M3": 1}
 # the files a rank folder needs besides its weights (the tokenizer, chat template and configs)
 SMALL = ("config.json", "generation_config.json", "tokenizer.json", "tokenizer_config.json", "chat_template.jinja",
          "processor_config.json", "model.safetensors.index.json")
@@ -53,6 +53,12 @@ EXL3_RULES = {("gate", "trellis"): "dim1", ("gate", "suh"): "rep", ("gate", "svh
 
 def rule(name: str) -> str:
     if name.startswith("model.visual."):
+        return "drop"
+    # ModelOpt NVFP4 scalars: a matrix's fp32 scale goes to both ranks; W4A16 never reads the static input scale.
+    # cc-defer: input_scale dropped (rank folders lack it); keep it ("rep") once GLM runs --precision checkpoint
+    if name.endswith(".weight_scale_2"):
+        return "rep"
+    if name.endswith(".input_scale"):
         return "drop"
     m = EXL3_EXPERT.search(name)
     if m:
@@ -126,7 +132,7 @@ def torch_dtype(dtype: str):
 
     return {"U32": torch.uint32, "I32": torch.int32, "F32": torch.float32, "BF16": torch.bfloat16, "F16": torch.float16,
             "I16": torch.int16, "U16": torch.uint16, "U8": torch.uint8, "I8": torch.int8, "I64": torch.int64,
-            "F64": torch.float64}[dtype]
+            "F64": torch.float64, "F8_E4M3": torch.float8_e4m3fn}[dtype]
 
 
 def rank_files(model_dir: str | Path, rank: int) -> list[Path]:

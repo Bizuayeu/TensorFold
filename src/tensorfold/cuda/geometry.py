@@ -110,10 +110,16 @@ def indexed_weights(world: int, mtp: bool, mapped_tables: bool = True):
     return transform
 
 
+ROUTED_EXPERT = re.compile(r"\.mlp\.experts\.\d+\.(gate|up|down)_proj\.weight$")
+
+
 def split_weights(rule, world: int = 2):
+    """GLM's rank of a checkpoint as loaded; ModelOpt NVFP4 projections as stored (a routed expert's fp32 scale held
+    per expert, a dense one's a number), the MTP layer's BF16 routed experts at the NVFP4 size they are packed to."""
+
     def transform(name: str, info: dict) -> tuple[int, int]:
         kind = rule(name)
-        if kind == "drop":
+        if kind == "drop" or (name.endswith(".weight_scale_2") and ".mlp.experts." not in name):
             return 0, 0
         shape = list(info["shape"])
         if not info.get("split") and kind != "rep":
@@ -123,6 +129,10 @@ def split_weights(rule, world: int = 2):
             shape[axis] //= world
         if name.startswith("lm_head."):
             shape[0] //= world
+        if info["dtype"] in ("U8", "F8_E4M3") and ".mlp.experts." not in name:
+            shape[0] = -(-shape[0] // 128) * 128           # a dense NVFP4 projection's rows padded as ``qmm.pack`` pads
+        if info["dtype"] == "BF16" and ROUTED_EXPERT.search(name):
+            return math.prod(shape) * 9 // 16 + 4, 0       # e2m1 codes, an e4m3 scale per 16, the expert's fp32 scale
         cast = name.endswith((".A_log", ".dt_bias", ".hc_attn_base", ".hc_attn_scale", ".hc_ffn_base",
                               ".hc_ffn_scale", ".e_score_correction_bias"))
         total = padded(info, shape, float32=cast, name=name)
@@ -304,10 +314,13 @@ def mla_geometry(t: dict, world: int, reserve: int, *, minimum_slots: int = 2560
     fixed += (2 if mtp else 1) * (16 * rows * extent * 4 + 8 * rows * 16384 * 4)
     # prompt-chunk buffers: at most 5 row extents a row without the head
     fixed += PREFILL_ROWS * 5 * (extent - int(t["vocab_size"]) // world)
-    if (t.get("_quantization") or {}).get("quant_method") == "exl3":
-        # EXL3 experts' scratch (decode windows, the MTP head's, a prompt chunk) and the prompt's BF16 split-K partials
+    quant = (t.get("_quantization") or {}).get("quant_method")
+    if quant == "exl3":
+        # EXL3 experts' scratch (decode windows, the MTP head's, a prompt chunk)
         fixed += (2 if mtp else 1) * exl3_expert_scratch(rows, slots, d, width)
-        fixed += exl3_expert_scratch(PREFILL_ROWS, slots, d, width) + 8 * PREFILL_ROWS * 16384 * 4
+        fixed += exl3_expert_scratch(PREFILL_ROWS, slots, d, width)
+    if quant in ("exl3", "modelopt"):
+        fixed += 8 * PREFILL_ROWS * 16384 * 4          # the prompt's BF16 split-K partials (BF16 attention, shared expert)
     lw = int(t.get("kv_lora_rank", 512))
     mla_cache_bytes(t, world, 0, latent=latent, kv=kv)          # a bad format fails here
     def bytes_at(capacity: int) -> int:

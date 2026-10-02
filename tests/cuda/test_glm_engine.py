@@ -38,9 +38,11 @@ CONFIG = {
 }
 
 
-def _checkpoint(path, exl3: bool = False, mtp: bool = True) -> None:
+def _checkpoint(path, exl3: bool = False, mtp: bool = True, nvfp4: bool = False) -> None:
     """The synthetic model as an MLX 4-bit checkpoint, or with ``exl3`` as an EXL3 one: routed experts as trellis
-    tiles with their scales, every other weight BF16 (the layout of Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw).
+    tiles with their scales, every other weight BF16 (the layout of Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw); with
+    ``nvfp4`` as a ModelOpt NVFP4 one (nvidia/GLM-5.3-Flash-NVFP4's layout): routed experts and the dense MLP as e2m1
+    codes, e4m3 scales per 16 inputs and fp32 weight and input scales, the MTP layer and every other weight BF16.
     ``mtp=False`` leaves out the MTP layer (the last tensors written, so the others keep their values)."""
 
     rng = np.random.default_rng(3)
@@ -54,8 +56,22 @@ def _checkpoint(path, exl3: bool = False, mtp: bool = True) -> None:
         x = (rng.standard_normal(shape) * scale + offset).astype(np.float32)
         tensors.append((name, "F32", shape, x.view(np.uint8).reshape(-1)))
 
+    def scalar(name: str, value: float) -> None:
+        tensors.append((name, "F32", [], np.array([value], dtype=np.float32).view(np.uint8)))
+
+    def fp4(name: str, n: int, k: int, scale: float = 0.01) -> None:
+        """A BF16 weight in ModelOpt's NVFP4 (``nvx.quantize`` follows its recipe), with a static input scale."""
+        from tensorfold.cuda.nvfp4 import experts as nvx
+
+        w = torch.tensor(rng.standard_normal((1, n, k)) * 4.6 * scale, dtype=torch.float32).to(torch.bfloat16)
+        words, scales, g = nvx.quantize(w)
+        tensors.append((name + ".weight", "U8", [n, k // 2], words[0].numpy().reshape(-1)))
+        tensors.append((name + ".weight_scale", "F8_E4M3", [n, k // 16], scales[0].numpy().reshape(-1)))
+        scalar(name + ".weight_scale_2", float(g[0]))
+        scalar(name + ".input_scale", float(rng.uniform(0.01, 0.02)))
+
     def q4(name: str, n: int, k: int, scale: float = 0.01) -> None:
-        if exl3:                  # the BF16 weight whose 4-bit version the MLX layout stores
+        if exl3 or nvfp4:         # the BF16 weight whose 4-bit version the MLX layout stores
             bf16(name + ".weight", [n, k], 4.6 * scale)
             return
         words = rng.integers(0, 2**32, size=(n, k // 8), dtype=np.uint64).astype(np.uint32)
@@ -87,10 +103,15 @@ def _checkpoint(path, exl3: bool = False, mtp: bool = True) -> None:
         bf16(p + "self_attn.indexer.index_kpool_compress_gate", [128, D])
         bf16(p + "self_attn.indexer.index_kpool_compress_ape", [4, 128])
 
-    def moe(p: str) -> None:
+    def moe(p: str, mtp_layer: bool = False) -> None:
         bf16(p + "mlp.gate.weight", [8, D])
         f32(p + "mlp.gate.e_score_correction_bias", [8], 0.01)
         for e in [f"experts.{i}" for i in range(8)] + ["shared_experts"]:
+            if nvfp4 and e != "shared_experts" and not mtp_layer:
+                fp4(p + f"mlp.{e}.gate_proj", MOE, D)
+                fp4(p + f"mlp.{e}.up_proj", MOE, D)
+                fp4(p + f"mlp.{e}.down_proj", D, MOE)
+                continue
             if exl3 and e != "shared_experts":
                 trellis(p + f"mlp.{e}.gate_proj", MOE, D)
                 trellis(p + f"mlp.{e}.up_proj", MOE, D)
@@ -125,9 +146,10 @@ def _checkpoint(path, exl3: bool = False, mtp: bool = True) -> None:
     f32(p + "dt_bias", [256], 0.5)
     bf16(p + "o_norm.weight", [128], 0.05, 1.0)
     q4(p + "o_proj", D, 256)
-    q4(L + "layers.0.mlp.gate_proj", 256, D)
-    q4(L + "layers.0.mlp.up_proj", 256, D)
-    q4(L + "layers.0.mlp.down_proj", D, 256)
+    dense = fp4 if nvfp4 else q4
+    dense(L + "layers.0.mlp.gate_proj", 256, D)
+    dense(L + "layers.0.mlp.up_proj", 256, D)
+    dense(L + "layers.0.mlp.down_proj", D, 256)
     dsa(L + "layers.1.")
     moe(L + "layers.1.")
     if mtp:
@@ -139,7 +161,7 @@ def _checkpoint(path, exl3: bool = False, mtp: bool = True) -> None:
         bf16(m + "input_layernorm.weight", [D], 0.05, 1.0)
         bf16(m + "post_attention_layernorm.weight", [D], 0.05, 1.0)
         dsa(m)
-        moe(m)
+        moe(m, mtp_layer=True)
     path.mkdir(parents=True, exist_ok=True)
     split.write(str(path / "model-00001-of-00001.safetensors"), tensors, {"format": "mlx"})
     config = json.loads(json.dumps(CONFIG))
@@ -148,6 +170,16 @@ def _checkpoint(path, exl3: bool = False, mtp: bool = True) -> None:
     if exl3:
         del config["quantization"]
         config["quantization_config"] = {"quant_method": "exl3", "bits": 4, "codebook": "mcg", "head_bits": 16}
+    if nvfp4:
+        del config["quantization"]
+        fp4_group = {"dynamic": False, "num_bits": 4, "type": "float", "group_size": 16}
+        config["quantization_config"] = {
+            "quant_method": "modelopt", "quant_algo": "NVFP4",
+            "config_groups": {"group_0": {"input_activations": fp4_group, "weights": fp4_group, "targets": ["Linear"]}},
+            "ignore": ["lm_head", "model.language_model.embed_tokens", "model.language_model.layers.*.self_attn*",
+                       "model.language_model.layers.1.mlp.gate", "model.language_model.layers.1.mlp.shared_experts*",
+                       "model.language_model.layers.2*"],
+            "kv_cache_scheme": {"dynamic": False, "num_bits": 8, "type": "float"}}
     (path / "config.json").write_text(json.dumps(config))
 
 
