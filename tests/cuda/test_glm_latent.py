@@ -396,3 +396,50 @@ def test_select_tokens_scores_hold_one_row_block():
     scores = sparse.SELECT_ROWS * (cap // 4) * 4
     assert bool((counts > 0).all())
     assert scores <= used < 2 * scores, used                    # one block's scores (512 MiB), not 2,048 rows' (2 GiB)
+
+
+@cuda
+@pytest.mark.parametrize("R", [64, 100, 2048])
+def test_prompt_absorb_and_expand_keep_the_one_loop_bits(monkeypatch, R):
+    """Prompt windows' BF16 absorb / expand over row blocks give every row the bits of the kernels that loop over all
+    rows in one program."""
+    from tensorfold.families.glm5_next.cuda import latent
+
+    gen = torch.Generator().manual_seed(20 + R)
+    wk, wv = _weights(gen)
+    a = latent.AbsorbW(wk.cuda(), wv.cuda())
+    q = torch.randn((R, H, D), generator=gen).to(torch.bfloat16).cuda()
+    ol = torch.randn((R, H, L), generator=gen).to(torch.bfloat16).cuda()
+
+    def run():
+        qa = latent.absorb_q(q, a, torch.empty((R, H, L), dtype=torch.bfloat16, device="cuda"))
+        out = latent.expand_v(ol, a, torch.empty((R, H, D), dtype=torch.bfloat16, device="cuda"))
+        return qa, out
+
+    assert R >= latent.PROMPT_ROWS
+    got = run()
+    monkeypatch.setattr(latent, "PROMPT_ROWS", 1 << 20)                       # every window in one loop, as before
+    want = run()
+    for g, w in zip(got, want):
+        assert torch.equal(g.view(torch.int16), w.view(torch.int16))
+
+
+@cuda
+@pytest.mark.parametrize("pos, R", [(36000, 2048), (9000, 513), (2047, 64)])
+def test_prompt_pool_scores_on_row_blocks_keep_the_lists(monkeypatch, pos, R):
+    """Prompt windows score SCORE_RB rows a program: every row keeps the tokens and count of one row a program."""
+    from tensorfold.families.glm5_next.cuda import sparse
+
+    gen = torch.Generator().manual_seed(pos + R)
+    H, D = 32, 128
+    npool_max = (pos + R) // 4 + 2
+    qi = torch.randn((R, H * D), generator=gen).to(torch.bfloat16).cuda()
+    wts = torch.randn((R, H), generator=gen).to(torch.bfloat16).cuda()
+    pk = torch.randn((npool_max, D), generator=gen).to(torch.bfloat16).cuda()
+    pos_dev = torch.tensor([pos], dtype=torch.int32, device="cuda")
+    assert R >= sparse.SCORE_RB_FROM and sparse.SCORE_RB == 4
+    got_t, got_c = sparse.select_tokens(qi, wts, pk, pos, R, npool_max - 2, pos_dev)
+    monkeypatch.setattr(sparse, "SCORE_RB", 1)                                 # one row a program, as before
+    want_t, want_c = sparse.select_tokens(qi, wts, pk, pos, R, npool_max - 2, pos_dev)
+    assert torch.equal(got_c, want_c)
+    assert torch.equal(got_t, want_t)
