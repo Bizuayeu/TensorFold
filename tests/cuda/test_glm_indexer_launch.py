@@ -1,5 +1,5 @@
-"""The indexer's launch shapes (rows a scoring program, pool columns scored) never change a row's pool scores, chosen
-pools or tokens: bf16 and TF_GLM_KV=fp8 pooled keys, decode windows and prompt chunks."""
+"""The indexer's launch shapes (rows a scoring program, pool columns scored) and the selection's list never change a
+row's pool scores, chosen pools or tokens: bf16 and TF_GLM_KV=fp8 pooled keys, decode windows and prompt chunks."""
 
 import pytest
 import torch
@@ -98,3 +98,42 @@ def test_selection_reads_only_scored_columns(monkeypatch, fp8, pos, R):
         got = sparse.select_tokens(qi, wts, pk, pos, R, np_max, pos_dev)
     assert torch.equal(got[1], want[1]) and bool((got[1] > 0).any())
     assert torch.equal(got[0], want[0])
+
+
+def _hard_rows(np_):
+    """test_glm_kernels' radix rows: distinct, heavy ties, -inf past the visible pools, -0 beside +0, fewer than 512
+    finite, all equal, tiny rounded scores."""
+    g = torch.Generator(device="cpu").manual_seed(np_)
+    rows = [torch.randn(np_, generator=g), torch.randint(-3, 4, (np_,), generator=g).float()]
+    r = torch.randn(np_, generator=g)
+    r[np_ // 3:] = float("-inf")
+    rows.append(r)
+    r = torch.zeros(np_)
+    r[::2] = -0.0
+    r[5::7] = 1.0
+    rows.append(r)
+    r = torch.full((np_,), float("-inf"))
+    r[:100] = torch.randn(100, generator=g)
+    rows += [r, torch.full((np_,), 2.5), (torch.randn(np_, generator=g) * 1e-30).to(torch.bfloat16).float()]
+    return torch.stack(rows).to("cuda").contiguous()
+
+
+@cuda
+@pytest.mark.parametrize("cap", [256, 1024, 8192, 65536])
+@pytest.mark.parametrize("np_", [700, 5003, 65536])
+@pytest.mark.parametrize("visible", [False, True])
+def test_selection_list_keeps_the_sorted_top_k(monkeypatch, cap, np_, visible):
+    """Whatever the list holds (SELECT_LIST 256: never 512 pools, the row is read to the end; at least the row's
+    pools: no list) the pools are a stable descending sort's first 512, ties to the lower pool; past each row's
+    visible pools (-inf) too."""
+    from tensorfold.families.glm5_next.cuda import sparse
+
+    scores = _hard_rows(np_)
+    position = None
+    if visible:
+        pos = 2 * np_
+        position = torch.tensor([pos], dtype=torch.int32, device="cuda")
+        seen = (pos + torch.arange(scores.shape[0], device="cuda") + 1) // 4
+        scores.masked_fill_(torch.arange(np_, device="cuda")[None, :] >= seen[:, None], float("-inf"))
+    monkeypatch.setattr(sparse, "SELECT_LIST", cap)
+    assert torch.equal(sparse.top_pools(scores, 512, position), sparse._top_pools(scores, 512))
