@@ -18,7 +18,8 @@ BACKEND_ENV = "TF_COMM_BACKEND"
 
 
 class Comm(Protocol):
-    """What every engine assumes; ``all_gather_fast``, ``exchange``, ``check`` (and NCCL's ``store``) are optional."""
+    """What every engine assumes; ``all_gather_fast``, ``exchange``, ``send_recv``, ``check`` (and NCCL's ``store``)
+    are optional."""
 
     rank: int
     world: int

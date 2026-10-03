@@ -61,10 +61,12 @@ Each engine defines its own serial reference. A verify row uses the same group o
 rounding as that row alone. Attention partitions depend on absolute key position; router ties use a
 stable ID order. Recurrent commits replay the accepted path with the same update routine.
 
-A two-rank engine opens its communicator with `tensorfold.cuda.comm.open_comm`: NCCL, wrapped by a registered
+A multi-rank engine opens its communicator with `tensorfold.cuda.comm.open_comm`: NCCL, wrapped by a registered
 transport (a `Transport` subclass) when `TF_COMM_BACKEND` names one; NCCL stays the control channel, and the ranks
 refuse to start with different transports. A model exchange calls `fast_gather`, which takes the transport's
-`all_gather_fast` where there is one; `exchange` trades tensors with a peer (an NCCL send / receive group), and
+`all_gather_fast` where there is one; `exchange` trades tensors with a peer (an NCCL send / receive group),
+`send_recv` sends to and receives from several peers in one group (GLM-5.3's prompt exchanges; a transport that
+does not define it keeps NCCL's), and
 `check` raises a transport's recorded failure after a synchronizing exchange. A transport moves bytes, so a reply
 never depends on it.
 
