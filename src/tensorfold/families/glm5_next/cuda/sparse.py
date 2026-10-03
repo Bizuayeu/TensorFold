@@ -197,7 +197,7 @@ def pool_bucket(pos: int, R: int, np_max: int) -> int:
 # windows of SCORE_RB_FROM rows or more (prompt chunks) score SCORE_RB rows a program, each pool tile loaded once for
 # them (_scores: the same bits a row)
 SCORE_RB_FROM = 64
-SCORE_RB = 4
+SCORE_RB = 16
 
 
 def select_tokens(qi: torch.Tensor, wts: torch.Tensor, pk: torch.Tensor, pos: int | None, R: int, np_max: int,
