@@ -164,7 +164,8 @@ def split_weights(rule, plan):
                               ".hc_ffn_scale", ".e_score_correction_bias"))
         total = padded(info, shape, float32=cast, name=name)
         if name == "lm_head.weight" and info["dtype"] in ("BF16", "F16", "F32"):
-            total += math.prod(shape) * 9 // 16  # the additional 4-bit draft head
+            # the additional 4-bit draft head, its rows padded to 128 as ``qmm.pack`` pads them
+            total += -(-shape[0] // 128) * 128 * math.prod(shape[1:]) * 9 // 16
         return total, 0
     return transform
 

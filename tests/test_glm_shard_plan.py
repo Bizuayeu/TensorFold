@@ -231,7 +231,8 @@ def test_three_rank_startup_estimates(headers, cfg, capsys):
             head += size if name.startswith("lm_head.") else 0
         width, vocab = plan.count(cfg.moe_width, UNIT), plan.count(cfg.vocab, UNIT)
         assert routed == (cfg.layers - first) * cfg.experts * 3 * (cfg.hidden * width * 9 // 16 + 4)
-        assert head == vocab * cfg.hidden * 2 + vocab * cfg.hidden * 9 // 16
+        # the BF16 head and its 4-bit draft copy, whose rows ``qmm.pack`` pads to 128 (51,648 hold 51,712)
+        assert head == vocab * cfg.hidden * 2 + -(-vocab // 128) * 128 * cfg.hidden * 9 // 16
         totals.append(total)
     assert totals[0] > totals[1] > totals[2]
     # the caches and buffers are estimated at the largest rank's share: per-head caches hold 22 heads, not 32

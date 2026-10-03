@@ -316,6 +316,26 @@ def test_sampled_replies_repeat(worlds):
     assert again == first
 
 
+# -- the startup estimate ------------------------------------------------------------------------------------------
+def test_each_rank_holds_its_startup_estimate(checkpoints):
+    """Each rank's weights as loaded are the bytes its startup estimate counts, the 4-bit draft head of the BF16 head
+    included: ``qmm.pack`` pads its rows to 128 (ranks 0 and 1 hold 512 rows for their 448)."""
+
+    from tensorfold.cuda.capacity import headers
+    from tensorfold.cuda.geometry import split_weights
+    from tensorfold.families.glm5_next.cuda import split
+    from tensorfold.families.glm5_next.cuda.weights import load
+
+    path = checkpoints["nvfp4"]
+    for rank in range(3):
+        w = load(path, rank=rank, world=3)
+        assert w.draft_head is not None
+        transform = split_weights(split.rule, w.plan)
+        assert sum(transform(name, info)[0] for name, info in headers(path).items()) == w.nbytes(), rank
+        del w
+    torch.cuda.empty_cache()
+
+
 # -- refusals and graphs -------------------------------------------------------------------------------------------
 def test_a_rank_started_otherwise_is_named(checkpoints):
     from tensorfold.families.glm5_next.cuda.engine import GlmEngine
