@@ -113,8 +113,9 @@ class GlmEngine:
 
     def __init__(self, model_dir: Path, *, rank: int, master: str, port: int, policy: str = DEFAULT_POLICY,
                  drafter: Path | None = None, context: int | None = None, context_explicit: bool | None = None, serial_only: bool = False, comm=None,
-                 prefill_rows: int | None = None, world: int = 2) -> None:
-        """``comm``: a communicator with ``all_gather`` and ``barrier`` instead of NCCL between the machines (tests)."""
+                 prefill_rows: int | None = None, world: int = 2, graphs: bool = True) -> None:
+        """``comm``: a communicator with ``all_gather`` and ``barrier`` instead of NCCL between the machines (tests);
+        ``graphs=False``: decode windows run eager (tests whose ranks are threads, whose exchanges wait on the host)."""
 
         from .weights import Config
 
@@ -215,7 +216,7 @@ class GlmEngine:
             from .dflash2 import Drafter
 
             self.drafter = Drafter(drafter, w, capacity=capacity, ring=DRAFT_RING)
-        self.e = Engine(w, capacity=capacity, max_rows=MAX_ROWS, prefill_rows=prefill_rows, graphs=True, graph_rows=GRAPH_ROWS,
+        self.e = Engine(w, capacity=capacity, max_rows=MAX_ROWS, prefill_rows=prefill_rows, graphs=graphs, graph_rows=GRAPH_ROWS,
                         long_context=long_context, taps=self.drafter.tap_layers if self.drafter is not None else (),
                         kv=self.kv)
         if self.drafter is not None:

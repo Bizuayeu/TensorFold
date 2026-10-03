@@ -15,6 +15,45 @@ import torch
 TIMEOUT = 300           # s a rank waits for the others at one exchange (test_flashnext_tp's _Hub)
 
 
+class Store:
+    """The rendezvous store's keys for the engine's idle doorbell, in memory. ``close`` ends every wait for a key not
+    set (a follower then leaves ``follow``); ``open`` lets them wait again."""
+
+    def __init__(self) -> None:
+        self.keys: set[str] = set()
+        self.closed = False
+        self.cond = threading.Condition()
+
+    def set(self, key: str, value) -> None:
+        with self.cond:
+            self.keys.add(key)
+            self.cond.notify_all()
+
+    def wait(self, keys: list[str], timeout) -> None:
+        with self.cond:
+            self.cond.wait_for(lambda: self.closed or all(k in self.keys for k in keys), timeout.total_seconds())
+            if all(k in self.keys for k in keys):
+                return
+            raise Closed("the store is closed") if self.closed else RuntimeError("wait timeout")
+
+    def delete_key(self, key: str) -> None:
+        with self.cond:
+            self.keys.discard(key)
+
+    def open(self) -> None:
+        with self.cond:
+            self.closed = False
+
+    def close(self) -> None:
+        with self.cond:
+            self.closed = True
+            self.cond.notify_all()
+
+
+class Closed(Exception):
+    pass
+
+
 class Hub:
     def __init__(self, world: int) -> None:
         self.world = world
@@ -48,7 +87,7 @@ class ThreadComm:
         self.hub.barrier.wait()
 
 
-def run_ranks(fn, world: int, hub: Hub | None = None) -> list:
+def run_ranks(fn, world: int, hub: Hub | None = None, store: Store | None = None) -> list:
     """fn(rank, comm) on every rank at once (threads); results in rank order. A rank's error breaks the others' waits
     and is raised here."""
 
@@ -59,7 +98,7 @@ def run_ranks(fn, world: int, hub: Hub | None = None) -> list:
     def body(r: int) -> None:
         try:
             with torch.no_grad():
-                results[r] = fn(r, ThreadComm(hub, r))
+                results[r] = fn(r, ThreadComm(hub, r, store))
         except BaseException as exc:        # noqa: BLE001  (raised below; unblock the other ranks)
             errors.append(exc)
             hub.barrier.abort()
