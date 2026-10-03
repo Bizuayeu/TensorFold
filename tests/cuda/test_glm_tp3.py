@@ -430,6 +430,37 @@ def test_sampled_replies_repeat(worlds):
     assert again == first
 
 
+@pytest.mark.parametrize("sampling", SAMPLINGS, ids=SAMPLING_IDS)
+@pytest.mark.parametrize("policy", ["0", "3"])
+def test_a_stop_ends_three_ranks_after_the_next_round(worlds, sampling, policy):
+    """#301 on three ranks: rank 0's stop rides the next verify gather (the padded top-k candidates of unequal shares,
+    the nucleus rule's first gather), every rank ends after that round in the same state, and the next request is
+    exact."""
+
+    rk = worlds[2][3]
+    rk.forget()
+    full, _ = rk.generate(ROWS_PROMPT, sampling, policy=policy, tokens=64)
+    heard: list[list[int]] = []
+
+    def stopped_third(e):
+        def on_tokens(new):
+            heard.append(list(new))
+            return len(heard) >= 3                  # the first token, then rounds 1 and 2
+
+        e.request.policy, e.request.stop_eos = policy, False
+        return e.generate(list(ROWS_PROMPT), 64, sampling, on_tokens)
+
+    rk.forget()
+    stats = rk.serve(stopped_third)
+    assert stats["stopped"] and stats["rounds"] == 3, stats
+    sent = [t for call in heard[:3] for t in call]
+    assert sent == full[:len(sent)] and len(sent) < len(full)
+    after = rk.each(lambda r, e: (e.e.vote, e.e.st.pos))
+    assert after == [(None, after[0][1])] * 3
+    again, _ = rk.generate(ROWS_PROMPT, sampling, policy=policy, tokens=64)
+    assert again == full
+
+
 # -- the startup estimate ------------------------------------------------------------------------------------------
 def test_each_rank_holds_its_startup_estimate(checkpoints):
     """Each rank's weights as loaded are the bytes its startup estimate counts, the 4-bit draft head of the BF16 head
