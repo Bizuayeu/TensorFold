@@ -85,8 +85,11 @@ onto TensorFold 0.6.1's single-sequence caches.
 GLM's pieced prompt exchanges (`families/glm5_next/cuda/overlap.py`, `TF_GLM_PREFILL_OVERLAP`) follow the idea of
 MiaAI-Lab's patches 0010-glm-hc-split and 0033-glm-prefill-overlap2 for TensorFold v0.6.0 (Apache License 2.0,
 `LICENSES/Apache-2.0.txt`): a prompt chunk's rank exchanges run on a second stream while the next rows' work goes on.
-No code is taken; this tree keeps the all-gather and pieces it by rows. The prompt pool scores' rows per program
-(`sparse.SCORE_RB`, 4) follow the default of their patch 0009-glm-prefill-kernels.
+No code is taken; this tree keeps the all-gather and pieces it by rows. Each rank gluing only its own rows of a
+reduce-scattered chunk and sending them to the others (`reduce.owned` and `reduce.share`,
+`TF_GLM_PREFILL_REDUCE=split`) follows the row split of their patch 0010, with shares of uneven size after their
+patches 0067 and 0068 (a 2,048-row chunk at three ranks had run unsplit); no code is taken from them either. The
+prompt pool scores' rows per program (`sparse.SCORE_RB`, 4) follow the default of their patch 0009-glm-prefill-kernels.
 
 GLM on three ranks takes three things from ashhart/TensorFold PR #159 (full GLM-5.3 on four ranks, by drowzeys,
 under this repository's Apache License 2.0; read at the PR head `befd47d`, from its commits `7779fe0` and `028698c`):
