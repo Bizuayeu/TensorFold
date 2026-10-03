@@ -140,41 +140,104 @@ def _order_key(s):
 
 
 @triton.jit
-def _select_rows(S, OUT, NP, POS, K: tl.constexpr, BLOCK: tl.constexpr, VISIBLE: tl.constexpr):
-    """Program r: a radix select (8 bits a pass) finds the K-th best score, then one pass in pool order writes the pools above it and the lowest ties."""
+def _digit_counts(src, n, prefix, fixed, SHIFT: tl.constexpr, BLOCK: tl.constexpr):
+    """Counts of the 8-bit digit at SHIFT among the keys of src[0:n] that equal prefix on the fixed bits."""
+    hist = tl.zeros((256,), dtype=tl.int32)
+    for c in range(0, n, BLOCK):
+        i = c + tl.arange(0, BLOCK)
+        ok = i < n
+        u = _order_key(tl.load(src + i, mask=ok, other=0.0))
+        match = ok & ((u & fixed) == prefix)
+        hist += tl.histogram(((u >> SHIFT) & 0xFF).to(tl.int32), 256, mask=match)
+    return hist
+
+
+@triton.jit
+def _next_digit(hist, prefix, fixed, need, SHIFT: tl.constexpr, K: tl.constexpr):
+    """The K-th best key's digit at SHIFT; also the pools still needed among its ties and how many pools are at or
+    above the prefix found so far."""
+    bins = tl.arange(0, 256)
+    at_or_above = tl.sum(hist, 0) - tl.cumsum(hist, 0) + hist           # pools with this digit or a higher one
+    digit = tl.max(tl.where(at_or_above >= need, bins, 0), 0)
+    need -= tl.sum(tl.where(bins > digit, hist, 0), 0)
+    size = K - need + tl.sum(tl.where(bins == digit, hist, 0), 0)
+    prefix = prefix | (digit.to(tl.uint32) << SHIFT)
+    fixed = fixed | (tl.full((), 0xFF, tl.uint32) << SHIFT)
+    return prefix, fixed, need, size
+
+
+@triton.jit
+def _write_pools(src, idx, n, out, prefix, need, BLOCK: tl.constexpr, LISTED: tl.constexpr):
+    """One pass in order over src[0:n]: the pools above the K-th best key and its lowest ties, ascending, into out
+    (pool numbers from idx when LISTED, else the positions)."""
+    written = 0
+    equal_seen = 0
+    for c in range(0, n, BLOCK):
+        i = c + tl.arange(0, BLOCK)
+        ok = i < n
+        u = _order_key(tl.load(src + i, mask=ok, other=0.0))
+        eq = (ok & (u == prefix)).to(tl.int32)
+        take = (ok & (u > prefix)) | ((eq == 1) & (tl.cumsum(eq, 0) - eq + equal_seen < need))
+        t = take.to(tl.int32)
+        pool = tl.load(idx + i, mask=take, other=0).to(tl.int64) if LISTED else i.to(tl.int64)
+        tl.store(out + written + tl.cumsum(t, 0) - t, pool, mask=take)
+        written += tl.sum(t, 0)
+        equal_seen += tl.sum(eq, 0)
+
+
+@triton.jit
+def _write_listed(row, limit, ls, li, out, prefix, fixed, need, K: tl.constexpr, BLOCK: tl.constexpr):
+    """One pass in pool order copies the row's pools at or above prefix (on the fixed bits) into ls (scores) and li
+    (pools); the remaining digits and the write read that list."""
+    n = 0
+    for c in range(0, limit, BLOCK):
+        i = c + tl.arange(0, BLOCK)
+        ok = i < limit
+        x = tl.load(row + i, mask=ok, other=0.0)
+        keep = ok & ((_order_key(x) & fixed) >= prefix)
+        t = keep.to(tl.int32)
+        at = n + tl.cumsum(t, 0) - t
+        tl.store(ls + at, x, mask=keep)
+        tl.store(li + at, i.to(tl.int32), mask=keep)
+        n += tl.sum(t, 0)
+    tl.debug_barrier()                                                 # the list's stores before its loads
+    for p in tl.static_range(4):
+        if ((fixed >> (24 - 8 * p)) & 0xFF) == 0:
+            hist = _digit_counts(ls, n, prefix, fixed, 24 - 8 * p, BLOCK)
+            prefix, fixed, need, _ = _next_digit(hist, prefix, fixed, need, 24 - 8 * p, K)
+    _write_pools(ls, li, n, out, prefix, need, BLOCK, True)
+
+
+@triton.jit
+def _select_rows(S, OUT, LS, LI, NP, POS, K: tl.constexpr, BLOCK: tl.constexpr, VISIBLE: tl.constexpr,
+                 CAP: tl.constexpr, LISTED: tl.constexpr):
+    """Program r: a radix select (8 bits a pass) of the K-th best score. LISTED: once the pools at or above the
+    digits found fit in CAP, they are copied into row r of LS and LI and the rest reads that list; a row no longer
+    than CAP, or past CAP (ties), is read by every pass and the write."""
 
     r = tl.program_id(0).to(tl.int64)
     row = S + r * NP
     limit = tl.minimum(NP, tl.maximum(K, (tl.load(POS) + r + 1) // 4)) if VISIBLE else NP
-    bins = tl.arange(0, 256)
     prefix = tl.zeros((), dtype=tl.uint32)
     fixed = tl.zeros((), dtype=tl.uint32)
-    need = K
+    need = tl.full((), K, tl.int32)
+    size = limit.to(tl.int32)                                          # pools at or above the prefix
     for p in tl.static_range(4):
-        hist = tl.zeros((256,), dtype=tl.int32)
-        for c in range(0, limit, BLOCK):
-            i = c + tl.arange(0, BLOCK)
-            ok = i < limit
-            u = _order_key(tl.load(row + i, mask=ok, other=0.0))
-            match = ok & ((u & fixed) == prefix)
-            hist += tl.histogram(((u >> (24 - 8 * p)) & 0xFF).to(tl.int32), 256, mask=match)
-        at_or_above = tl.sum(hist, 0) - tl.cumsum(hist, 0) + hist           # pools with this digit or a higher one
-        digit = tl.max(tl.where(at_or_above >= need, bins, 0), 0)
-        need -= tl.sum(tl.where(bins > digit, hist, 0), 0)
-        prefix = prefix | (digit.to(tl.uint32) << (24 - 8 * p))
-        fixed = fixed | (tl.full((), 0xFF, tl.uint32) << (24 - 8 * p))
-    written = 0
-    equal_seen = 0
-    for c in range(0, limit, BLOCK):
-        i = c + tl.arange(0, BLOCK)
-        ok = i < limit
-        u = _order_key(tl.load(row + i, mask=ok, other=0.0))
-        eq = (ok & (u == prefix)).to(tl.int32)
-        take = (ok & (u > prefix)) | ((eq == 1) & (tl.cumsum(eq, 0) - eq + equal_seen < need))
-        t = take.to(tl.int32)
-        tl.store(OUT + r * K + written + tl.cumsum(t, 0) - t, i.to(tl.int64), mask=take)
-        written += tl.sum(t, 0)
-        equal_seen += tl.sum(eq, 0)
+        if (size > CAP) | (limit <= CAP):                             # a row no longer than the list: read it
+            hist = _digit_counts(row, limit, prefix, fixed, 24 - 8 * p, BLOCK)
+            prefix, fixed, need, size = _next_digit(hist, prefix, fixed, need, 24 - 8 * p, K)
+    if LISTED:
+        if (size <= CAP) & (limit > CAP):
+            _write_listed(row, limit, LS + r * CAP, LI + r * CAP, OUT + r * K, prefix, fixed, need, K, BLOCK)
+        else:
+            _write_pools(row, row, limit, OUT + r * K, prefix, need, BLOCK, False)
+    else:
+        _write_pools(row, row, limit, OUT + r * K, prefix, need, BLOCK, False)
+
+
+# pools a row's selection copies out once those at or above the digits found fit (two 8-bit passes left at most 563 on
+# a real DSA layer's rows, p up to 1,034,240): the remaining passes and the write read the list, not the row
+SELECT_LIST = 1024
 
 
 def top_pools(scores: torch.Tensor, k: int, pos_dev: torch.Tensor | None = None) -> torch.Tensor:
@@ -183,8 +246,11 @@ def top_pools(scores: torch.Tensor, k: int, pos_dev: torch.Tensor | None = None)
     if NP < k or not scores.is_contiguous():
         return _top_pools(scores, k)
     out = torch.empty((R, k), dtype=torch.int64, device=scores.device)
-    _select_rows[(R,)](scores, out, NP, pos_dev if pos_dev is not None else scores,
-                       K=k, BLOCK=1024, VISIBLE=pos_dev is not None, num_warps=4)
+    listed = NP > SELECT_LIST                                          # else every row is read as it is
+    ls = torch.empty((R, SELECT_LIST), dtype=torch.float32, device=scores.device) if listed else scores
+    li = torch.empty((R, SELECT_LIST), dtype=torch.int32, device=scores.device) if listed else scores
+    _select_rows[(R,)](scores, out, ls, li, NP, pos_dev if pos_dev is not None else scores, K=k, BLOCK=1024,
+                       VISIBLE=pos_dev is not None, CAP=SELECT_LIST, LISTED=listed, num_warps=4)
     return out
 
 
