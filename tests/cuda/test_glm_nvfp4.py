@@ -138,6 +138,37 @@ def test_mtp_experts_are_drafting_nvfp4_of_the_bf16_weights(path, ranks):
                 assert np.array_equal(nvx.dense(ex, e, which).cpu().numpy(), want), (rank, e, which)
 
 
+def _tensors(x) -> list[torch.Tensor]:
+    """Every tensor a loaded part holds, in attribute order."""
+
+    if isinstance(x, torch.Tensor):
+        return [x]
+    if isinstance(x, (list, tuple)):
+        return [t for v in x for t in _tensors(v)]
+    if hasattr(x, "__dict__") and type(x).__module__.startswith("tensorfold"):
+        return [t for v in vars(x).values() for t in _tensors(v)]
+    return []
+
+
+@pytest.mark.parametrize("chosen", [[0], [1]], ids=["kda dense", "dsa moe"])
+def test_chosen_layers_load_as_in_the_whole_model(path, ranks, chosen):
+    """``layers=`` builds only those layers (the MTP layer, head and embedding as ever), each the whole load's, so a
+    test can hold a few real layers of several ranks on one GPU."""
+
+    from tensorfold.families.glm5_next.cuda.weights import load
+
+    for rank, whole in enumerate(ranks):
+        w = load(path, rank=rank, layers=chosen)
+        assert [lw.index for lw in w.layers] == chosen
+        pairs = [(w.layers[0], whole.layers[chosen[0]]), (w.mtp, whole.mtp), (w.head, whole.head),
+                 (w.embed, whole.embed)]
+        for got, want in pairs:
+            a, b = _tensors(got), _tensors(want)
+            assert a and len(a) == len(b) and all(torch.equal(x, y) for x, y in zip(a, b))
+    with pytest.raises(ValueError, match="layer"):
+        load(path, rank=0, layers=[2])
+
+
 def test_precision_checkpoint_is_refused_by_name(path):
     from tensorfold.cuda import precision
     from tensorfold.families.glm5_next.cuda.weights import load

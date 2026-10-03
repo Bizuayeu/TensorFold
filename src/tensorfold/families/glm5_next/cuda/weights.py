@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import torch
 
@@ -272,9 +272,10 @@ class Weights:
         return total
 
 
-def load(model_dir: str | Path, *, rank: int, world: int = 2, device: str = "cuda", mtp: bool = True) -> Weights:
+def load(model_dir: str | Path, *, rank: int, world: int = 2, device: str = "cuda", mtp: bool = True,
+         layers: Sequence[int] | None = None) -> Weights:
     """Rank ``rank`` of ``world`` from a checkpoint or rank folder, MTP included unless ``mtp`` is False, with its
-    share of the head's vocabulary."""
+    share of the head's vocabulary; ``layers``: only those layers (tests holding a few real ones of several ranks)."""
 
     from .split import RankReader, ShardPlan
 
@@ -464,14 +465,14 @@ def load(model_dir: str | Path, *, rank: int, world: int = 2, device: str = "cud
 
     layer_events: list = []                              # each layer's event, recorded once its work is queued
 
-    def layer(i: int, plain: bool = False) -> LayerW:
+    def layer(i: int, plain: bool = False, nxt: int | None = None) -> LayerW:
         kind = "dsa" if plain else cfg.kinds[i]
         mk = "moe" if plain else cfg.mlp_kinds[i]
         if len(layer_events) >= 2:                       # at most two layers queued ahead of the GPU
             layer_events.pop(0).synchronize()
         up = None if exl3 else dev                       # MLX and NVFP4 experts come uploaded (EXL3 unpacks on the host)
         rd.prefetch(expert_names(i), up)                 # already queued, except for the first layer
-        rd.prefetch(expert_names(i + 1), up)             # two layers in flight: reads overlap copies and packing
+        rd.prefetch(expert_names(i + 1 if nxt is None else nxt), up)   # two layers in flight: reads overlap copies
         lw = LayerW(i, kind, None if plain else hc(i, "attn"), None if plain else hc(i, "ffn"),
                     t(f"layers.{i}.input_layernorm.weight"), t(f"layers.{i}.post_attention_layernorm.weight"))
         if kind == "kda":
@@ -493,8 +494,10 @@ def load(model_dir: str | Path, *, rank: int, world: int = 2, device: str = "cud
         embed = (as_i32(rd.get(PREFIX + "embed_tokens.weight")).to(dev), rd.get(PREFIX + "embed_tokens.scales").to(dev),
                  rd.get(PREFIX + "embed_tokens.biases").to(dev))
     try:                                          # a failed load still cancels the reads queued ahead
-        which = list(range(cfg.layers))
-        built = [layer(i) for i in which]
+        which = list(range(cfg.layers)) if layers is None else sorted(set(layers))
+        if any(not 0 <= i < cfg.layers for i in which):
+            raise ValueError(f"layers {which}: the model has layers 0 .. {cfg.layers - 1}")
+        built = [layer(i, nxt=n) for i, n in zip(which, which[1:] + [cfg.layers])]   # the last one reads MTP's ahead
         lo, hi = plan.span(cfg.vocab, UNIT)
         draft_head = None
         if bf16:
