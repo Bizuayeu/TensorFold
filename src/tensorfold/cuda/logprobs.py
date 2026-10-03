@@ -56,29 +56,48 @@ def top_columns(logits: torch.Tensor, count: int) -> torch.Tensor:
 
 
 @torch.no_grad()
-def prompt_rows(logits: torch.Tensor, targets: list[int], top: int, gather) -> list[tuple[float, int, list]]:
+def prompt_rows(logits: torch.Tensor, targets: list[int], top: int, gather, spans: list[tuple[int, int]] | None = None,
+                rank: int = 0) -> list[tuple[float, int, list]]:
     """One rank's vocabulary shard of some rows [n, shard] -> each row's (target log probability, its rank in the whole
     vocabulary, the top ``top`` (id, log probability) highest first), the same on every rank.
 
-    The shards are equal and in rank order: gather slot r holds ids r * shard onward. Every rank sends its logit at
-    column ``target % shard`` and the combiner reads slot ``target // shard``'s, so a second gather can count every
-    shard's logits at or above it: vLLM's rank of a prompt token (its top entries are ranked by position)."""
+    ``spans``: every rank's [first, end) ids in rank order (this one's at ``rank``); without them the shards are equal
+    and gather slot r holds ids r * shard onward. Every rank sends its logit at column ``(target - first) % shard``
+    and the combiner reads the slot of the shard holding the target, so a second gather can count every shard's logits
+    at or above it: vLLM's rank of a prompt token (its top entries are ranked by position). A shard narrower than the
+    widest pads its top entries with -inf (column -1), so every rank gathers the same size."""
 
     n, shard = logits.shape
     if not logits.is_cuda or logits.stride(1) != 1 or len(targets) != n:
         raise ValueError("prompt rows need CUDA logits [rows, shard] and one target a row")
     dev = logits.device
-    count = min(top, shard)
+    if spans is None:
+        lo, starts, widest = 0, None, shard
+    else:
+        lo, starts, widest = spans[rank][0], [first for first, _ in spans], max(hi - first for first, hi in spans)
+        if spans[rank][1] - lo != shard:
+            raise ValueError(f"rank {rank}'s logits are {shard} wide, its span {spans[rank]}")
+    count = min(top, widest)
     ids = torch.tensor(targets, dtype=torch.int64, device=dev)
     rows = torch.arange(n, device=dev)
-    cols = top_columns(logits, count) if count else torch.empty((n, 0), dtype=torch.int64, device=dev)
-    packed = torch.cat([log_sum_exp(logits)[:, None], logits.gather(1, cols).float(),
-                        cols.to(torch.int32).view(torch.float32), logits[rows, ids % shard].float()[:, None]], dim=1)
+    cols = top_columns(logits, min(count, shard)) if count else torch.empty((n, 0), dtype=torch.int64, device=dev)
+    values = logits.gather(1, cols).float()
+    if cols.shape[1] < count:
+        values = torch.cat([values, values.new_full((n, count - cols.shape[1]), float("-inf"))], dim=1)
+        cols = torch.cat([cols, cols.new_full((n, count - cols.shape[1]), -1)], dim=1)
+    packed = torch.cat([log_sum_exp(logits)[:, None], values, cols.to(torch.int32).view(torch.float32),
+                        logits[rows, (ids - lo) % shard].float()[:, None]], dim=1)
     got = gather(packed.contiguous().view(-1)).view(-1, n, 2 + 2 * count)           # [world, n, width]
     world = got.shape[0]
-    if min(targets, default=0) < 0 or max(targets, default=0) >= world * shard:
+    if starts is None:
+        starts = [r * shard for r in range(world)]
+        end = world * shard
+    else:
+        end = spans[-1][1]
+    if min(targets, default=0) < 0 or max(targets, default=0) >= end:
         raise ValueError("a prompt token is outside the vocabulary")
-    target = got[ids // shard, rows, -1]
+    first = torch.tensor(starts, dtype=torch.int64, device=dev)
+    target = got[torch.searchsorted(first, ids, right=True) - 1, rows, -1]
     above = (logits.float() >= target[:, None]).sum(dim=1).to(torch.int32)
     ranks = gather(above.view(torch.float32)).view(world, n).view(torch.int32).sum(dim=0).tolist()
     g = got.cpu()
@@ -87,7 +106,7 @@ def prompt_rows(logits: torch.Tensor, targets: list[int], top: int, gather) -> l
     lse = peak + np.log(np.exp(parts - peak).sum(axis=0))
     values = np.concatenate(list(g[:, :, 1:1 + count].double().numpy()), axis=1)   # [n, world * count]
     columns = g[:, :, 1 + count:1 + 2 * count].contiguous().view(torch.int32).numpy().astype(np.int64)
-    gids = np.concatenate([columns[r] + r * shard for r in range(world)], axis=1)
+    gids = np.concatenate([np.where(columns[r] < 0, -1, columns[r] + starts[r]) for r in range(world)], axis=1)
     chosen = target.double().cpu().numpy() - lse
     out = []
     for i in range(n):

@@ -581,15 +581,23 @@ class GlmEngine:
         if self.drafter is not None:
             self.drafter.reset()
         local = prompt_logits(self.e, prompt)
-        rows = [local] if self.comm is None else self._gather_floats(local)
+        if self.comm is None:
+            rows, starts = [local], len(local)
+        else:
+            spans = self.w.vocab_spans
+            rows = self._gather_floats(local, max(hi - lo for lo, hi in spans))
+            rows, starts = [row[:hi - lo] for row, (lo, hi) in zip(rows, spans)], [lo for lo, _ in spans]
         if self.rank != 0:
             return [], 0.0
-        return reduce_vocab_shards(rows, labels, len(rows[0]))
+        return reduce_vocab_shards(rows, labels, starts)
 
-    def _gather_floats(self, values: list[float]) -> list[list[float]]:
+    def _gather_floats(self, values: list[float], width: int) -> list[list[float]]:
+        """Every rank's ``values`` padded with -inf to ``width`` (the same on every rank), in rank order."""
+
         torch = self.torch
-        mine = torch.tensor(values, dtype=torch.float32, device="cuda")
-        got = torch.empty((self.world * len(values),), dtype=torch.float32, device="cuda")
+        mine = torch.full((width,), float("-inf"), dtype=torch.float32, device="cuda")
+        mine[:len(values)] = torch.tensor(values, dtype=torch.float32, device="cuda")
+        got = torch.empty((self.world * width,), dtype=torch.float32, device="cuda")
         self.comm.all_gather(mine, got)
         return [[float(item) for item in row] for row in got.view(self.world, -1).tolist()]
 

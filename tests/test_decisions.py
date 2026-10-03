@@ -445,6 +445,17 @@ def test_two_vocabulary_shards_rebuild_the_full_logsumexp():
         reduce_vocab_shards(rows, [4], 2)
 
 
+def test_unequal_vocabulary_shards_are_read_from_their_first_ids():
+    rows = [[1.0, 3.0, 5.0], [0.0, 2.0], [4.0, 6.0]]      # ids 0-2, 3-4 and 5-6
+    flat = [value for row in rows for value in row]
+    peak = max(flat)
+    logits, logsumexp = reduce_vocab_shards(rows, [0, 2, 3, 4, 6], [0, 3, 5])
+    assert logits == [1.0, 5.0, 0.0, 2.0, 6.0]
+    assert logsumexp == pytest.approx(peak + math.log(math.fsum(math.exp(value - peak) for value in flat)))
+    with pytest.raises(ValueError, match="outside the vocabulary"):
+        reduce_vocab_shards(rows, [7], [0, 3, 5])
+
+
 def test_cuda_decisions_scores_through_the_template():
     pytest.importorskip("tokenizers")
     from tensorfold.cuda.http import make_handler as cuda_handler

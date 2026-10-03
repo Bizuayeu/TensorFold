@@ -237,6 +237,12 @@ class Weights:
     def vocab_offset(self) -> int:
         return self.plan.span(self.cfg.vocab, UNIT)[0]
 
+    @property
+    def vocab_spans(self) -> list[tuple[int, int]]:
+        """Every rank's [first, end) of the head's vocabulary, in rank order (ranks of three: unequal widths)."""
+
+        return self.plan.spans(self.cfg.vocab, UNIT)
+
     def nbytes(self) -> int:
         total = 0
         seen = set()
