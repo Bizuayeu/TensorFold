@@ -98,8 +98,9 @@ def check(model_dir: str | Path) -> None:
             print(f"[tensorfold] this checkpoint has no MTP layer: decoding without MTP drafts ({MODELS[0]} has "
                   f"one)", flush=True)
         return
-    print("[tensorfold] GLM-5.3-Flash runs on two NVIDIA GPUs with 128 GB each (two DGX Sparks): pull it on both "
-          "and serve with --tp 2 on both (docs/recipes/glm-5.3-flash.md)", flush=True)
+    tps = " or ".join(f"--tp {tp}" for tp in CUDA_TP)
+    print(f"[tensorfold] GLM-5.3-Flash runs on NVIDIA GPUs with 128 GB each, one per machine (DGX Sparks): pull it on "
+          f"each and serve with {tps} on all of them (docs/recipes/glm-5.3-flash.md)", flush=True)
 
 
 def has_mtp(model_dir: str | Path) -> bool:
