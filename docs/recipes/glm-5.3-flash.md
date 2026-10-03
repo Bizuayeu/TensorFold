@@ -134,8 +134,9 @@ tok/s.
 
 `TF_GLM_PREFILL_REDUCE` picks how those exchanges sum the partials (every rank the same): `gather` all-gathers every
 rank's fp32 partial and each rank glues every row; `scatter` reduce-scatters the rows to their owners and sends the
-sums back; `split` (the default over NCCL) sends the rows to their owners, each owner glues only its own rows and
-sends the glued rows back. All three keep rank order in each sum, so the bits are `gather`'s. On three DGX Sparks a
+sums back; `split` (the default where the communicator has `send_recv`: NCCL, or a transport over it) sends the
+rows to their owners, each owner glues only its own rows and sends the glued rows back. All three keep rank order in
+each sum, so the bits are `gather`'s. On three DGX Sparks a
 38,960-token prompt fills at 1,396 tok/s with `gather`, 1,491 with `scatter` and 1,671 with `split`.
 
 Measured on two DGX Sparks (GB10, 128 GB each) with the MLX 4-bit checkpoint, MTP drafts only,
