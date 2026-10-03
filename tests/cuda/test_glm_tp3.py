@@ -473,7 +473,8 @@ def test_a_rank_reducing_otherwise_is_named(checkpoints, monkeypatch):
 
     odd = threading.local()
     real = reduce.settings
-    monkeypatch.setattr(reduce, "settings", lambda env=None: "scatter" if getattr(odd, "on", False) else real(env))
+    monkeypatch.setattr(reduce, "settings",
+                        lambda env=None, comm=None: "scatter" if getattr(odd, "on", False) else real(env, comm))
 
     def start(r, comm):
         odd.on = r == 2

@@ -23,8 +23,16 @@ D = 512
 
 
 def test_the_setting_is_gather_scatter_or_split():
+    class Peers:                                  # a communicator that can send and receive between ranks
+        def send_recv(self, sends, recvs):
+            pass
+
+    # unset: split where the communicator has send_recv (NCCL, threads), gather where it has not
     assert reduce.settings({}) == "gather"
-    assert reduce.settings({"TF_GLM_PREFILL_REDUCE": ""}) == "gather"
+    assert reduce.settings({}, object()) == "gather"
+    assert reduce.settings({}, Peers()) == "split"
+    assert reduce.settings({"TF_GLM_PREFILL_REDUCE": ""}, Peers()) == "split"
+    assert reduce.settings({"TF_GLM_PREFILL_REDUCE": "gather"}, Peers()) == "gather"
     assert reduce.settings({"TF_GLM_PREFILL_REDUCE": " scatter "}) == "scatter"
     assert reduce.settings({"TF_GLM_PREFILL_REDUCE": "split"}) == "split"
     with pytest.raises(ValueError, match="TF_GLM_PREFILL_REDUCE: gather, scatter or split, not 'ring'"):

@@ -1,5 +1,5 @@
-"""TF_GLM_PREFILL_REDUCE (default gather): how a prompt chunk's ranks sum their fp32 partials at each exchange site,
-and with split, which rows each rank glues.
+"""TF_GLM_PREFILL_REDUCE (default split where the communicator has send_recv, else gather): how a prompt chunk's
+ranks sum their fp32 partials at each exchange site, and with split, which rows each rank glues.
 
 gather: every rank all-gathers every rank's partial b.part[:R] ([world, R, D] fp32); the consumer (hc_post, or the
 MTP block's residual add) sums them rank 0 first and rounds the branch to bf16.
@@ -40,11 +40,13 @@ from . import glue
 MODES = ("gather", "scatter", "split")
 
 
-def settings(env=None) -> str:
-    """The mode from TF_GLM_PREFILL_REDUCE (gather, scatter or split)."""
+def settings(env=None, comm=None) -> str:
+    """The mode from TF_GLM_PREFILL_REDUCE (gather, scatter or split); unset, split where ``comm`` has send_recv
+    (NCCL, the test threads) and gather elsewhere."""
 
     env = os.environ if env is None else env
-    mode = str(env.get("TF_GLM_PREFILL_REDUCE", "") or "gather").strip()
+    default = "split" if hasattr(comm, "send_recv") else "gather"
+    mode = str(env.get("TF_GLM_PREFILL_REDUCE", "") or default).strip()
     if mode not in MODES:
         raise ValueError(f"TF_GLM_PREFILL_REDUCE: gather, scatter or split, not {mode!r}")
     return mode
