@@ -88,6 +88,13 @@ MiaAI-Lab's patches 0010-glm-hc-split and 0033-glm-prefill-overlap2 for TensorFo
 No code is taken; this tree keeps the all-gather and pieces it by rows. The prompt pool scores' rows per program
 (`sparse.SCORE_RB`, 4) follow the default of their patch 0009-glm-prefill-kernels.
 
+GLM on three ranks takes two things from ashhart/TensorFold PR #159 (full GLM-5.3 on four ranks, by drowzeys, under
+this repository's Apache License 2.0; read at the PR head `befd47d`, from its commits `7779fe0` and `028698c`):
+`--tp` checked against the family's `CUDA_TP` in `cli.py`, and the type of `tests/cuda/threadcomm.py` (ranks as
+threads of one process on one GPU, their all-gathers handed over in host memory). Both are rewritten for this tree;
+the PR's all-to-all and reduce-scatter are not taken. A doorbell key per follower (`GlmEngine._bell_key`) is the
+fix MiaAI-Lab's patch 0066-glm-tp-n makes for the same wait; no code is taken from it.
+
 ## Vendored code and weights
 
 `src/tensorfold/drafters/vendor/z_lab_dflash/model_mlx.py` is the unmodified `dflash/model_mlx.py` from

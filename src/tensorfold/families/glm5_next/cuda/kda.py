@@ -23,6 +23,7 @@ class KDAScratch:
     """Static window outputs and replay inputs, with optional views into shared storage so all layers can replay together."""
 
     def __init__(self, rows: int, heads: int, device, parent: "KDAScratchSet | None" = None, index: int = 0) -> None:
+        self.owner = parent if parent is not None else self       # holds the long windows' temporaries
         if parent is None:
             self.out = torch.empty((rows, heads * DV), dtype=torch.bfloat16, device=device)
             self.k = torch.empty((rows, heads, DK), dtype=torch.float32, device=device)
@@ -56,17 +57,16 @@ def replay_layers(state_in: torch.Tensor, scratch: KDAScratchSet, rows: int, sta
 
 
 WIDE_ROWS = 64          # windows of this many rows or more (prefill chunks) run the chain in three kernels
-_tmp: dict = {}
 
 
-def _wide_scratch(rows: int, heads: int, device) -> tuple[torch.Tensor, torch.Tensor]:
-    """The normalized q and the read-out of a long window, shared by every layer (they run one after another)."""
-    key = (heads, device)
-    q, y = _tmp.get(key, (None, None))
+def _wide_scratch(owner, rows: int, heads: int, device) -> tuple[torch.Tensor, torch.Tensor]:
+    """The normalized q and the read-out of a long window, kept on ``owner`` (a scratch or its set): shared by the
+    layers of one buffer (they run one after another), not by engines that run at once (ranks as threads in tests)."""
+    q, y = getattr(owner, "wide", (None, None))
     if q is None or q.shape[0] < rows:
         q = torch.empty((rows, heads, DK), dtype=torch.float32, device=device)
         y = torch.empty((rows, heads, DV), dtype=torch.bfloat16, device=device)
-        _tmp[key] = (q, y)
+        owner.wide = (q, y)
     return q, y
 
 
@@ -77,7 +77,7 @@ def chain(p: torch.Tensor, b_off: int, a: torch.Tensor, g: torch.Tensor, conv_st
     """Run projection rows p [q | k | v | ... | b at b_off ...] and bf16 gate rows a and g; windows of WIDE_ROWS rows or more take the three-kernel path, same bits."""
 
     if wide if wide is not None else rows >= WIDE_ROWS:
-        q_tmp, y_tmp = _wide_scratch(rows, a_log.numel(), p.device)
+        q_tmp, y_tmp = _wide_scratch(scratch.owner, rows, a_log.numel(), p.device)
         _ext().chain_wide(p, p.stride(0), int(b_off), a, a.stride(0), g, g.stride(0), conv_state, conv_w, state_in,
                           a_log, dt_bias, norm_w, float(eps), float(lower), int(rows), scratch.out, state_out,
                           scratch.k, scratch.v, scratch.g, scratch.b, q_tmp, y_tmp)

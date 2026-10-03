@@ -38,12 +38,14 @@ CONFIG = {
 }
 
 
-def _checkpoint(path, exl3: bool = False, mtp: bool = True, nvfp4: bool = False) -> None:
+def _checkpoint(path, exl3: bool = False, mtp: bool = True, nvfp4: bool = False, *, heads: int = 2,
+                lin_heads: int = 2, moe_width: int = MOE, dense_width: int = 256, vocab: int = V) -> None:
     """The synthetic model as an MLX 4-bit checkpoint, or with ``exl3`` as an EXL3 one: routed experts as trellis
     tiles with their scales, every other weight BF16 (the layout of Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw); with
     ``nvfp4`` as a ModelOpt NVFP4 one (nvidia/GLM-5.3-Flash-NVFP4's layout): routed experts and the dense MLP as e2m1
     codes, e4m3 scales per 16 inputs and fp32 weight and input scales, the MTP layer and every other weight BF16.
-    ``mtp=False`` leaves out the MTP layer (the last tensors written, so the others keep their values)."""
+    ``mtp=False`` leaves out the MTP layer (the last tensors written, so the others keep their values). ``heads``,
+    ``lin_heads`` (128 wide), ``moe_width``, ``dense_width`` and ``vocab`` resize the split axes (defaults: CONFIG's)."""
 
     rng = np.random.default_rng(3)
     tensors: list[tuple[str, str, list[int], np.ndarray]] = []
@@ -92,9 +94,9 @@ def _checkpoint(path, exl3: bool = False, mtp: bool = True, nvfp4: bool = False)
         q4(p + "self_attn.kv_a_proj_with_mqa", 128, D)
         bf16(p + "self_attn.q_a_layernorm.weight", [128], 0.05, 1.0)
         bf16(p + "self_attn.kv_a_layernorm.weight", [128], 0.05, 1.0)
-        q4(p + "self_attn.q_b_proj", 2 * 256, 128)
-        q4(p + "self_attn.kv_b_proj", 2 * 512, 128)
-        q4(p + "self_attn.o_proj", D, 2 * 256)
+        q4(p + "self_attn.q_b_proj", heads * 256, 128)
+        q4(p + "self_attn.kv_b_proj", heads * 512, 128)
+        q4(p + "self_attn.o_proj", D, heads * 256)
         q4(p + "self_attn.indexer.wk", 128, D)
         q4(p + "self_attn.indexer.weights_proj", 2, D)
         q4(p + "self_attn.indexer.wq_b", 2 * 128, 128)
@@ -108,23 +110,23 @@ def _checkpoint(path, exl3: bool = False, mtp: bool = True, nvfp4: bool = False)
         f32(p + "mlp.gate.e_score_correction_bias", [8], 0.01)
         for e in [f"experts.{i}" for i in range(8)] + ["shared_experts"]:
             if nvfp4 and e != "shared_experts" and not mtp_layer:
-                fp4(p + f"mlp.{e}.gate_proj", MOE, D)
-                fp4(p + f"mlp.{e}.up_proj", MOE, D)
-                fp4(p + f"mlp.{e}.down_proj", D, MOE)
+                fp4(p + f"mlp.{e}.gate_proj", moe_width, D)
+                fp4(p + f"mlp.{e}.up_proj", moe_width, D)
+                fp4(p + f"mlp.{e}.down_proj", D, moe_width)
                 continue
             if exl3 and e != "shared_experts":
-                trellis(p + f"mlp.{e}.gate_proj", MOE, D)
-                trellis(p + f"mlp.{e}.up_proj", MOE, D)
-                trellis(p + f"mlp.{e}.down_proj", D, MOE)
+                trellis(p + f"mlp.{e}.gate_proj", moe_width, D)
+                trellis(p + f"mlp.{e}.up_proj", moe_width, D)
+                trellis(p + f"mlp.{e}.down_proj", D, moe_width)
                 continue
-            q4(p + f"mlp.{e}.gate_proj", MOE, D)
-            q4(p + f"mlp.{e}.up_proj", MOE, D)
-            q4(p + f"mlp.{e}.down_proj", D, MOE)
+            q4(p + f"mlp.{e}.gate_proj", moe_width, D)
+            q4(p + f"mlp.{e}.up_proj", moe_width, D)
+            q4(p + f"mlp.{e}.down_proj", D, moe_width)
 
     L = "model.language_model."
-    q4(L + "embed_tokens", V, D, 0.02)
+    q4(L + "embed_tokens", vocab, D, 0.02)
     bf16(L + "norm.weight", [D], 0.05, 1.0)
-    q4("lm_head", V, D)
+    q4("lm_head", vocab, D)
     for i in (0, 1):
         p = f"{L}layers.{i}."
         bf16(p + "input_layernorm.weight", [D], 0.05, 1.0)
@@ -134,22 +136,23 @@ def _checkpoint(path, exl3: bool = False, mtp: bool = True, nvfp4: bool = False)
             f32(p + f"hc_{site}_base", [24])
             f32(p + f"hc_{site}_scale", [3], 0.1, 1.0)
     p = L + "layers.0.self_attn."
+    lw = lin_heads * 128
     for x in "qkv":
-        q4(p + f"{x}_proj", 256, D)
-        (f32 if nvfp4 else bf16)(p + f"{x}_conv1d.weight", [256, 1, 4], 0.3)     # fp32 in NVIDIA's NVFP4 layout
+        q4(p + f"{x}_proj", lw, D)
+        (f32 if nvfp4 else bf16)(p + f"{x}_conv1d.weight", [lw, 1, 4], 0.3)     # fp32 in NVIDIA's NVFP4 layout
     q4(p + "f_a_proj", 128, D)
     q4(p + "g_a_proj", 128, D)
-    q4(p + "b_proj", 2, D)
-    q4(p + "f_b_proj", 256, 128)
-    q4(p + "g_b_proj", 256, 128)
-    f32(p + "A_log", [2], 0.5)
-    f32(p + "dt_bias", [256], 0.5)
+    q4(p + "b_proj", lin_heads, D)
+    q4(p + "f_b_proj", lw, 128)
+    q4(p + "g_b_proj", lw, 128)
+    f32(p + "A_log", [lin_heads], 0.5)
+    f32(p + "dt_bias", [lw], 0.5)
     bf16(p + "o_norm.weight", [128], 0.05, 1.0)
-    q4(p + "o_proj", D, 256)
+    q4(p + "o_proj", D, lw)
     dense = fp4 if nvfp4 else q4
-    dense(L + "layers.0.mlp.gate_proj", 256, D)
-    dense(L + "layers.0.mlp.up_proj", 256, D)
-    dense(L + "layers.0.mlp.down_proj", D, 256)
+    dense(L + "layers.0.mlp.gate_proj", dense_width, D)
+    dense(L + "layers.0.mlp.up_proj", dense_width, D)
+    dense(L + "layers.0.mlp.down_proj", D, dense_width)
     dsa(L + "layers.1.")
     moe(L + "layers.1.")
     if mtp:
@@ -165,6 +168,9 @@ def _checkpoint(path, exl3: bool = False, mtp: bool = True, nvfp4: bool = False)
     path.mkdir(parents=True, exist_ok=True)
     split.write(str(path / "model-00001-of-00001.safetensors"), tensors, {"format": "mlx"})
     config = json.loads(json.dumps(CONFIG))
+    config["text_config"].update(num_attention_heads=heads, moe_intermediate_size=moe_width, intermediate_size=dense_width,
+                                 vocab_size=vocab)
+    config["text_config"]["linear_attn_config"]["num_heads"] = lin_heads
     if not mtp:
         config["text_config"]["num_nextn_predict_layers"] = 0
     if exl3:
@@ -228,15 +234,17 @@ def _drafter(path) -> None:
 
 
 class _TwoCopies:
-    """Rank 0 of two on one GPU: every all-gather returns this rank's input twice."""
+    """Rank 0 of two on one GPU: every all-gather returns this rank's input twice (``_TwoCopies(world, rank)``: rank
+    ``rank`` of ``world``, its input ``world`` times)."""
 
-    rank, world = 0, 2
+    def __init__(self, world: int = 2, rank: int = 0) -> None:
+        self.world, self.rank = world, rank
 
     def all_gather(self, send: torch.Tensor, recv: torch.Tensor) -> None:
         n = send.numel()
         flat = recv.view(-1)
-        flat[:n].copy_(send.reshape(-1))
-        flat[n:2 * n].copy_(send.reshape(-1))
+        for r in range(self.world):
+            flat[r * n:(r + 1) * n].copy_(send.reshape(-1))
 
     def barrier(self) -> None:
         torch.cuda.synchronize()
