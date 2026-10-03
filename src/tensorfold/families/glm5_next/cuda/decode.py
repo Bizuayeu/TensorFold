@@ -28,11 +28,16 @@ def sample_rows(w: Weights, logits: torch.Tensor, positions: Sequence[int], samp
     if not greedy and not sampling.top_k:           # top_k off: the shared nucleus rule over every rank's shard
         return nucleus_rows(logits, positions, sampling, offset=w.vocab_offset if offset is None else offset,
                             gather=one_rank if w.comm is None else comm_gather(w.comm), probs=probs)
-    k = 1 if greedy else min(logits.shape[1], int(sampling.top_k) + MARGIN)
+    # every rank sends k candidates: a shard narrower than the widest pads its own with -inf (id -1)
+    widest = logits.shape[1] if w.comm is None else max(hi - lo for lo, hi in w.vocab_spans)
+    k = 1 if greedy else min(widest, int(sampling.top_k) + MARGIN)
     if probs is not None and greedy:
-        k = min(logits.shape[1], 20 + MARGIN)       # the draft's confidence needs its competitors too
-    vals, ids = torch.topk(logits.float(), k, dim=-1)
+        k = min(widest, 20 + MARGIN)                # the draft's confidence needs its competitors too
+    vals, ids = torch.topk(logits.float(), min(k, logits.shape[1]), dim=-1)
     ids = (ids + (w.vocab_offset if offset is None else offset)).to(torch.int32)
+    if vals.shape[1] < k:
+        vals = torch.cat([vals, vals.new_full((R, k - vals.shape[1]), float("-inf"))], dim=1)
+        ids = torch.cat([ids, ids.new_full((R, k - ids.shape[1]), -1)], dim=1)
     if w.comm is None:
         values = vals.cpu().numpy().astype(np.float32)
         tokens = ids.cpu().numpy().astype(np.int64)
@@ -427,14 +432,17 @@ def _prompt_rows(e: Engine, b: Buffers, prompt: Sequence[int], start: int, R: in
     n = min(R, len(prompt) - 1 - start)          # the prompt's last row predicts the reply, not a prompt token
     if n <= 0:
         return
-    width = max(1, ENTRIES // w.head.n)          # bf16 logits of a group, never a chunk's [rows, vocab] in fp32
+    spans = None if w.comm is None else w.vocab_spans
+    # bf16 logits of a group, never a chunk's [rows, vocab] in fp32; groups by the widest shard, so every rank gathers
+    # as many times
+    width = max(1, ENTRIES // max(hi - lo for lo, hi in spans or [(0, w.head.n)]))
     out = torch.empty((min(n, width), w.head.n), dtype=torch.bfloat16, device=b.fnormed.device)
     gather = one_rank if w.comm is None else comm_gather(w.comm)
     for r0 in range(0, n, width):
         r1 = min(n, r0 + width)
         logits = mm(b, b.fnormed[r0:r1], w.head, b.fxs[r0:r1], out[:r1 - r0])
         targets = [int(t) for t in prompt[start + r0 + 1:start + r1 + 1]]
-        for i, (logprob, rank, top) in enumerate(prompt_rows(logits, targets, collector.top, gather)):
+        for i, (logprob, rank, top) in enumerate(prompt_rows(logits, targets, collector.top, gather, spans, w.rank)):
             collector.add(start + r0 + i + 1, logprob, rank, top)
 
 

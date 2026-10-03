@@ -97,6 +97,11 @@ class ShardPlan:
         first, end = split_units(total // unit, self.world, self.rank)
         return first * unit, end * unit
 
+    def spans(self, total: int, unit: int = 1) -> list[tuple[int, int]]:
+        """Every rank's [first, end) of ``total`` elements, in rank order."""
+
+        return [ShardPlan(self.cfg, self.world, r).span(total, unit) for r in range(self.world)]
+
     def axis(self, name: str) -> tuple[int, int]:
         """(elements, unit) of tensor ``name``'s split axis in the model: its heads, or an MLP width or vocabulary."""
 

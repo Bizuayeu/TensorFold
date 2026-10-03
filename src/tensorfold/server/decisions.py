@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+import bisect
 import json
 import math
 import string
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -299,10 +301,13 @@ def _label_ids(encode: Any, prompt: str, prompt_ids: list[int], labels: list[str
     return found
 
 
-def reduce_vocab_shards(rows: list[list[float]], label_ids: list[int], shard: int) -> tuple[list[float], float]:
-    """Join per-rank vocabulary shards into the label logits and the full-vocabulary logsumexp."""
+def reduce_vocab_shards(rows: list[list[float]], label_ids: list[int],
+                        shard: int | Sequence[int]) -> tuple[list[float], float]:
+    """Join per-rank vocabulary shards into the label logits and the full-vocabulary logsumexp; ``shard`` is the
+    shards' common width, or each shard's first id in rank order (unequal shards)."""
 
-    if shard < 1 or not rows or any(not row for row in rows):
+    starts = [r * shard for r in range(len(rows))] if isinstance(shard, int) else [int(s) for s in shard]
+    if (isinstance(shard, int) and shard < 1) or not rows or any(not row for row in rows) or len(starts) != len(rows):
         raise ValueError("label scoring needs a positive shard width and one row per rank")
     peak = max(max(row) for row in rows)
     total = math.fsum(math.exp(value - peak) for row in rows for value in row)
@@ -311,8 +316,9 @@ def reduce_vocab_shards(rows: list[list[float]], label_ids: list[int], shard: in
     logsumexp = peak + math.log(total)
     logits = []
     for token in label_ids:
-        rank, column = divmod(int(token), shard)
-        if rank < 0 or rank >= len(rows) or column >= len(rows[rank]):
+        rank = bisect.bisect_right(starts, int(token)) - 1
+        column = int(token) - starts[rank]
+        if rank < 0 or column >= len(rows[rank]):
             raise ValueError(f"label token {token} is outside the vocabulary")
         logits.append(float(rows[rank][column]))
     if not math.isfinite(logsumexp) or any(not math.isfinite(value) for value in logits):
