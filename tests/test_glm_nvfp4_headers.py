@@ -146,3 +146,15 @@ def test_the_family_reads_modelopt_nvfp4_on_cuda(tmp_path, monkeypatch):
     (tmp_path / "config.json").write_text(json.dumps(fp8))
     with pytest.raises(ValueError, match="ModelOpt FP8"):
         glm5_next.check(tmp_path)
+
+
+def test_the_cuda_note_names_every_tp_the_family_serves(monkeypatch, capsys):
+    import sys
+
+    from tensorfold.families import glm5_next
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    glm5_next.check(HERE)
+    note = capsys.readouterr().out
+    assert all(f"--tp {tp}" in note for tp in glm5_next.CUDA_TP), note
+    assert "two NVIDIA GPUs" not in note
