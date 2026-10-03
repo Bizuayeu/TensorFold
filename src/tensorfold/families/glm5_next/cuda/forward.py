@@ -17,7 +17,7 @@ from tensorfold.cuda.kernels import prefill_attention, qmm as shared
 from tensorfold.cuda.nvfp4 import experts as nvx
 from tensorfold.cuda.nvfp4.linear import Fp4Linear
 
-from . import KV_KINDS, exl3_generic, glue, kda as kda_mod, kv8, latent, overlap, prof, qmm, sparse
+from . import KV_KINDS, exl3_generic, glue, kda as kda_mod, kv8, latent, overlap, prof, qmm, reduce, sparse
 from .attention import AttnScratch, attention, kv_write
 from .split import UNIT
 from .weights import LayerW, Weights
@@ -138,6 +138,10 @@ class Buffers:
         self.tap_at: dict[int, list[int]] = {}
         self.experts = c.experts
         self.top_k = c.top_k
+        # a prompt buffer's exchanges reduce-scattered (TF_GLM_PREFILL_REDUCE, ``reduce``)
+        self.scatter = prefill and w.world > 1 and reduce.settings() == "scatter"
+        if self.scatter and not hasattr(w.comm, "send_recv"):
+            raise ValueError("TF_GLM_PREFILL_REDUCE=scatter: the communicator has no send_recv")
         # a prompt buffer's exchanges in row pieces on a second stream (TF_GLM_PREFILL_OVERLAP, ``overlap``)
         self.overlap = None
         if prefill and w.world > 1:
@@ -256,14 +260,13 @@ class State:
 
 # -- blocks ---------------------------------------------------------------------------------------------------
 def gather(w: Weights, b: Buffers, R: int) -> torch.Tensor:
-    """Every rank's fp32 partial b.part[:R] in rank order: [world, R, D] (summed rank 0 first by the consumer)."""
+    """Every rank's fp32 partial b.part[:R] in rank order: [world, R, D] (summed rank 0 first by the consumer); in a
+    reduce-scattering prompt buffer their bf16 sum in slot 0 and -0.0 in the others, the same bits (``reduce``)."""
 
     d = b.part.shape[1]
     if w.comm is None:
         return b.part[:R].view(1, R, d)
-    out = b.gath[:b.world * R * d]
-    w.comm.all_gather(b.part[:R].reshape(-1), out)
-    return out.view(b.world, R, d)
+    return reduce.sums(w.comm, b.part[:R], b.gath[:b.world * R * d], b.scatter)
 
 
 def mm(b: Buffers, x: torch.Tensor, q, xs: torch.Tensor | None, out: torch.Tensor, f32: bool = False) -> torch.Tensor:

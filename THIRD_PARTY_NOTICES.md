@@ -91,9 +91,13 @@ No code is taken; this tree keeps the all-gather and pieces it by rows. The prom
 GLM on three ranks takes two things from ashhart/TensorFold PR #159 (full GLM-5.3 on four ranks, by drowzeys, under
 this repository's Apache License 2.0; read at the PR head `befd47d`, from its commits `7779fe0` and `028698c`):
 `--tp` checked against the family's `CUDA_TP` in `cli.py`, and the type of `tests/cuda/threadcomm.py` (ranks as
-threads of one process on one GPU, their all-gathers handed over in host memory). Both are rewritten for this tree;
-the PR's all-to-all and reduce-scatter are not taken. A doorbell key per follower (`GlmEngine._bell_key`) is the
-fix MiaAI-Lab's patch 0066-glm-tp-n makes for the same wait; no code is taken from it.
+threads of one process on one GPU, their all-gathers handed over in host memory). Both are rewritten for this tree.
+GLM's exact reduce-scatter of a prompt chunk's partials (`families/glm5_next/cuda/reduce.py`,
+`TF_GLM_PREFILL_REDUCE=scatter`) follows the PR's all-to-all and rank-order sum (`028698c`): each rank adds its share
+in rank order, then the sums are gathered. It is written for this tree by rows of uneven shares over grouped
+point-to-point sends (`comm.NCCL.send_recv`), with the sums sent as bf16; NCCL's own reduce-scatter is not used.
+A doorbell key per follower (`GlmEngine._bell_key`) is the fix MiaAI-Lab's patch 0066-glm-tp-n makes for the same
+wait; no code is taken from it.
 
 ## Vendored code and weights
 

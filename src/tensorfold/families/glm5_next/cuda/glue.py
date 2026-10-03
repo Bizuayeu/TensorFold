@@ -211,6 +211,42 @@ def hc_post(x: torch.Tensor, xout: torch.Tensor, gathered: torch.Tensor, post: t
 
 
 @triton.jit
+def _rank_sum(OWN, PEERS, OUT, RS, D: tl.constexpr, WORLD: tl.constexpr, ME: tl.constexpr, BLOCK: tl.constexpr):
+    """hc_post's and residual_add's branch, stored: bf16(partials summed rank 0 first), rank ME's own from OWN and
+    the others' from PEERS in rank order, RS apart (``reduce``, scatter)."""
+
+    r = tl.program_id(0)
+    cb = tl.program_id(1)
+    d = cb * BLOCK + tl.arange(0, BLOCK)
+    if ME == 0:
+        acc = tl.load(OWN + r * D + d)
+    else:
+        acc = tl.load(PEERS + r * D + d)
+    for k in tl.static_range(1, WORLD):
+        if k == ME:
+            acc = acc + tl.load(OWN + r * D + d)
+        elif k > ME:
+            acc = acc + tl.load(PEERS + (k - 1) * RS + r * D + d)
+        else:
+            acc = acc + tl.load(PEERS + k * RS + r * D + d)
+    tl.store(OUT + r * D + d, acc.to(tl.bfloat16))
+
+
+def rank_sum(own: torch.Tensor, peers: torch.Tensor, me: int, out: torch.Tensor) -> None:
+    """own: [rows, D] fp32, this rank's partial; peers: [world - 1, rows, D] fp32, the other ranks' in rank order
+    (rows contiguous, ranks peers.stride(0) apart); out: [rows, D] bf16."""
+
+    rows, d = own.shape
+    world = peers.shape[0] + 1
+    if (not own.is_contiguous() or peers.shape[1:] != (rows, d) or peers.stride(1) != d or peers.stride(2) != 1
+            or not out.is_contiguous() or out.shape != (rows, d) or not 0 <= me < world):
+        raise ValueError("rank_sum: rows of D contiguous fp32 partials into a contiguous [rows, D] output")
+    block = min(1024, d)
+    _rank_sum[(rows, d // block)](own, peers, out, peers.stride(0), D=d, WORLD=world, ME=me, BLOCK=block,
+                                  num_warps=4)
+
+
+@triton.jit
 def _residual_add(X, XOUT, G, RS, D: tl.constexpr, WORLD: tl.constexpr, BLOCK: tl.constexpr):
     """Plain residual (the MTP block): X = bf16(X + bf16(partials summed rank 0 first))."""
 

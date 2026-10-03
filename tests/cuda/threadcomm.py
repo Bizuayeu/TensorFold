@@ -1,9 +1,10 @@
 """``comm.NCCL`` for ranks that are threads of one process on one GPU, any rank count (tests only).
 
 Each all-gather hands its input over in host memory: the rank finishes its queued work, every rank's input is
-copied into the output in rank order, and no rank goes on before all have copied. The exchanges cannot be captured
-in CUDA graphs (they wait on the host). The type follows ``tests/cuda/threadcomm.py`` of ashhart/TensorFold PR #159
-(drowzeys, Apache-2.0), written for this tree with the all-gather only.
+copied into the output in rank order, and no rank goes on before all have copied; ``send_recv`` hands each rank's
+sends to their peers the same way. The exchanges cannot be captured in CUDA graphs (they wait on the host). Each
+rank counts its calls (``calls``) and the bytes it received from other ranks (``received``). The type follows
+``tests/cuda/threadcomm.py`` of ashhart/TensorFold PR #159 (drowzeys, Apache-2.0), written for this tree.
 """
 
 from __future__ import annotations
@@ -64,12 +65,15 @@ class Hub:
 class ThreadComm:
     def __init__(self, hub: Hub, rank: int, store=None) -> None:
         self.hub, self.rank, self.world = hub, rank, hub.world
+        self.calls: dict[str, int] = {}
+        self.received = 0
         if store is not None:
             self.store = store
 
     def all_gather(self, send: torch.Tensor, recv: torch.Tensor) -> None:
         if recv.numel() != send.numel() * self.world or send.dtype != recv.dtype:
             raise ValueError("all_gather: recv must hold world x send of the same dtype")
+        self._count("all_gather", (self.world - 1) * send.nbytes)
         torch.cuda.current_stream().synchronize()
         self.hub.slots[self.rank] = send
         self.hub.barrier.wait()
@@ -79,6 +83,32 @@ class ThreadComm:
             flat[r * n:(r + 1) * n].copy_(self.hub.slots[r].reshape(-1))
         torch.cuda.current_stream().synchronize()
         self.hub.barrier.wait()
+
+    def send_recv(self, sends: list, recvs: list) -> None:
+        """``comm.NCCL.send_recv``: each (tensor, peer) of ``sends`` to that peer; each (tensor, peer) of ``recvs``
+        filled by that peer's sends to this rank, in order."""
+
+        self._count("send_recv", sum(t.nbytes for t, _ in recvs))
+        torch.cuda.current_stream().synchronize()
+        self.hub.slots[self.rank] = sends
+        self.hub.barrier.wait()
+        taken = [0] * self.world
+        for t, peer in recvs:
+            mine = [s for s, to in self.hub.slots[peer] if to == self.rank]
+            src = mine[taken[peer]]
+            taken[peer] += 1
+            if src.numel() != t.numel() or src.dtype != t.dtype:
+                raise ValueError(f"send_recv: rank {peer} sent {src.numel()} {src.dtype}, rank {self.rank} expects "
+                                 f"{t.numel()} {t.dtype}")
+            t.view(-1).copy_(src.reshape(-1))
+        if any(taken[r] != sum(1 for _, to in self.hub.slots[r] if to == self.rank) for r in range(self.world)):
+            raise ValueError(f"send_recv: rank {self.rank} left a send unreceived")
+        torch.cuda.current_stream().synchronize()
+        self.hub.barrier.wait()
+
+    def _count(self, name: str, nbytes: int) -> None:
+        self.calls[name] = self.calls.get(name, 0) + 1
+        self.received += nbytes
 
     def barrier(self) -> None:
         self.hub.barrier.wait()

@@ -7,6 +7,7 @@ piece is written (into its own [world, n, D] slice of b.gath); the glue (hc_post
 then runs piece by piece, each piece waiting for its own gather only, while the later pieces are still on the wire.
 Every kernel involved is row-independent and each row's partials are still summed rank 0 first by hc_post, so every
 bit is the unpieced path's; only the order in time changes. Decode windows and the MTP head never take this path.
+A reduce-scattering buffer (TF_GLM_PREFILL_REDUCE=scatter) reduce-scatters each piece in its slot (``reduce.sums``).
 
 The idea of overlapping a prompt chunk's exchanges with the next rows' work follows MiaAI-Lab's patches 0010 and 0033
 for TensorFold v0.6.0 (Apache-2.0); this module is written for this tree and keeps the all-gather."""
@@ -18,7 +19,7 @@ from typing import Callable
 
 import torch
 
-from . import prof
+from . import prof, reduce
 
 ROW_STEP = 128           # piece boundaries on multiples of this (the BF16 prompt matmul's 128-row blocks)
 
@@ -52,6 +53,7 @@ class Overlap:
         self.stream = None                      # made with the events at the first pieced chunk
         self.active = False
         self.cut: list[tuple[int, int]] = []
+        self.got: list[torch.Tensor | None] = [None] * 16      # each piece's partials (or sums) for its glue
 
     def begin(self, R: int) -> bool:
         """Pieces for a chunk of R rows; False (and inactive) when it has fewer than two."""
@@ -72,14 +74,14 @@ class Overlap:
         self.active = False
 
     def _slot(self, lo: int, hi: int) -> torch.Tensor:
-        """Piece [lo, hi)'s gathered partials [world, n, D] in b.gath (pieces never share bytes)."""
+        """Piece [lo, hi)'s room in b.gath (pieces never share bytes): world x n x D fp32."""
 
         b, world = self.b, self.b.world
         d = b.part.shape[1]
-        return b.gath[world * lo * d:world * hi * d].view(world, hi - lo, d)
+        return b.gath[world * lo * d:world * hi * d]
 
     def partials(self, fill: Callable[[int, int], None]) -> None:
-        """``fill(lo, hi)`` writes b.part[lo:hi]; each piece's all-gather starts on the second stream once written."""
+        """``fill(lo, hi)`` writes b.part[lo:hi]; each piece's exchange starts on the second stream once written."""
 
         main = torch.cuda.current_stream()
         for j, (lo, hi) in enumerate(self.cut):
@@ -87,14 +89,14 @@ class Overlap:
             self.filled[j].record(main)
             with torch.cuda.stream(self.stream):
                 self.stream.wait_event(self.filled[j])
-                self.w.comm.all_gather(self.b.part[lo:hi].reshape(-1), self._slot(lo, hi).view(-1))
+                self.got[j] = reduce.sums(self.w.comm, self.b.part[lo:hi], self._slot(lo, hi), self.b.scatter)
                 self.gathered[j].record(self.stream)
 
     def glue(self, then: Callable[[int, int, torch.Tensor], None]) -> None:
-        """``then(lo, hi, gathered)`` for each piece in order, once that piece's gather is done."""
+        """``then(lo, hi, gathered)`` for each piece in order, once that piece's exchange is done."""
 
         main = torch.cuda.current_stream()
         for j, (lo, hi) in enumerate(self.cut):
             with prof.timed("hc: exchange wait"):
                 main.wait_event(self.gathered[j])
-            then(lo, hi, self._slot(lo, hi))
+            then(lo, hi, self.got[j])
