@@ -194,6 +194,14 @@ def pool_bucket(pos: int, R: int, np_max: int) -> int:
     return min(np_max, max(1024, 1 << (visible - 1).bit_length()))
 
 
+def score_columns(pos: int | None, rows: int, np_max: int) -> int:
+    """Pool columns of a bucket that selection reads for rows pos .. pos + rows - 1: the last row's complete pools, at
+    least TOPK_POOLS (top_pools' visible limit); every column when the positions are on the device only (a graph)."""
+    if pos is None:
+        return np_max
+    return min(np_max, max(TOPK_POOLS, (pos + rows) // POOL))
+
+
 # windows of SCORE_RB_FROM rows or more (prompt chunks) score SCORE_RB rows a program, each pool tile loaded once for
 # them (_scores: the same bits a row)
 SCORE_RB_FROM = 64
@@ -221,10 +229,12 @@ def select_tokens(qi: torch.Tensor, wts: torch.Tensor, pk: torch.Tensor, pos: in
     for a in range(0, R, B):
         n = min(B, R - a)
         at = pos_dev if a == 0 else pos_dev + a                        # the block's first row's position
-        _scores[(triton.cdiv(n, rb), triton.cdiv(np_max, 64))](qi[a:a + n], wts[a:a + n], wts.stride(0), pkc, scores,
-                                                               at, n, np_max, D ** -0.5, wscale, H=H,
-                                                               HP=max(16, triton.next_power_of_2(H)), D=D, BP=64,
-                                                               RB=rb, FP8=fp8, num_warps=4)
+        # the bucket's columns past those selection reads are left unwritten (the -inf tiles cost a write each)
+        cols = score_columns(None if pos is None else pos + a, n, np_max)
+        _scores[(triton.cdiv(n, rb), triton.cdiv(cols, 64))](qi[a:a + n], wts[a:a + n], wts.stride(0), pkc, scores,
+                                                             at, n, np_max, D ** -0.5, wscale, H=H,
+                                                             HP=max(16, triton.next_power_of_2(H)), D=D, BP=64,
+                                                             RB=rb, FP8=fp8, num_warps=4)
         blocks.append(top_pools(scores[:n], TOPK_POOLS, at))                           # ascending pool index
     del scores
     pools = blocks[0] if len(blocks) == 1 else torch.cat(blocks)
