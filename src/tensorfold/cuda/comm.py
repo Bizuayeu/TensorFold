@@ -1,4 +1,5 @@
-"""NCCL all-gather on the current stream so CUDA graphs capture it; a rank-order sum after it keeps ranks bit-equal."""
+"""NCCL all-gather (and grouped point-to-point sends) on the current stream so CUDA graphs capture them; a rank-order
+sum after them keeps ranks bit-equal."""
 
 from __future__ import annotations
 
@@ -66,6 +67,9 @@ class NCCL:
         lib.ncclCommInitRank.argtypes = [ctypes.POINTER(ctypes.c_void_p), ctypes.c_int, _UniqueId, ctypes.c_int]
         lib.ncclAllGather.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_void_p,
                                       ctypes.c_void_p]
+        for name in ("ncclSend", "ncclRecv"):
+            getattr(lib, name).argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int,
+                                           ctypes.c_void_p, ctypes.c_void_p]
         self.store = TCPStore(master, port, world, rank == 0, timeout=timedelta(seconds=timeout_s))
         uid = _UniqueId()
         if rank == 0:
@@ -90,6 +94,24 @@ class NCCL:
         stream = torch.cuda.current_stream().cuda_stream
         self._check(self.lib.ncclAllGather(send.data_ptr(), recv.data_ptr(), send.numel(), _DTYPES[send.dtype],
                                            self.comm, stream))
+
+    def send_recv(self, sends: list, recvs: list) -> None:
+        """Point-to-point in one NCCL group: each (tensor, peer) of ``sends`` to that peer, each (tensor, peer) of
+        ``recvs`` filled by it (contiguous tensors; several between one pair of ranks match in order)."""
+
+        for t, peer in sends + recvs:
+            if not t.is_contiguous() or t.dtype not in _DTYPES or not 0 <= peer < self.world or peer == self.rank:
+                raise ValueError("send_recv: contiguous tensors of an NCCL dtype, to and from other ranks")
+        stream = torch.cuda.current_stream().cuda_stream
+        lib = self.lib
+        self._check(lib.ncclGroupStart())
+        try:
+            for t, peer in sends:
+                self._check(lib.ncclSend(t.data_ptr(), t.numel(), _DTYPES[t.dtype], peer, self.comm, stream))
+            for t, peer in recvs:
+                self._check(lib.ncclRecv(t.data_ptr(), t.numel(), _DTYPES[t.dtype], peer, self.comm, stream))
+        finally:
+            self._check(lib.ncclGroupEnd())
 
     def ready(self, label: str, *, every: float = 60.0, timeout: float = 3600.0) -> None:
         """Every rank finishes ``label`` before any goes on; a rank missing after ``timeout`` s is named."""

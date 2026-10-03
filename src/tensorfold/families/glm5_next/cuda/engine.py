@@ -170,11 +170,13 @@ class GlmEngine:
         long_context = self.limit > cfg.dense_limit
         # every rank must run the same calls: refuse to start when they were given different settings
         prefill_rows = PREFILL_ROWS if prefill_rows is None else int(prefill_rows)
-        from . import overlap
+        from . import overlap, reduce
 
-        # TF_GLM_PREFILL_OVERLAP / TF_GLM_OVERLAP_PIECES: every rank must cut a chunk's exchanges alike
+        # TF_GLM_PREFILL_OVERLAP / TF_GLM_OVERLAP_PIECES / TF_GLM_PREFILL_REDUCE: every rank must make a chunk's
+        # exchanges alike
         mine = [int(drafter is not None), capacity, int(long_context), int(serial_only), int(LATENT),
-                prefill_rows, int(self.mtp_on), int(DRAFT_RING), KV_KINDS.index(self.kv), *map(int, overlap.settings())]
+                prefill_rows, int(self.mtp_on), int(DRAFT_RING), KV_KINDS.index(self.kv), *map(int, overlap.settings()),
+                reduce.MODES.index(reduce.settings())]
         # other conversations' kept prompts get what the window leaves, at most TF_GLM_CACHE_GIB, the same on every rank
         plan = self.capacity_plan
         wanted = int(float(os.environ.get("TF_GLM_CACHE_GIB", "3")) * 2 ** 30)
@@ -184,7 +186,7 @@ class GlmEngine:
         if odd:
             raise RuntimeError("the ranks were started with different settings (draft model, context, drafts, "
                                "TF_GLM_LATENT, TF_GLM_MTP, TF_GLM_DRAFT_RING, TF_GLM_KV, TF_GLM_PREFILL_OVERLAP, "
-                               f"TF_GLM_OVERLAP_PIECES): rank 0 {every[0][:-1]}, "
+                               f"TF_GLM_OVERLAP_PIECES, TF_GLM_PREFILL_REDUCE): rank 0 {every[0][:-1]}, "
                                + ", ".join(f"rank {r} {every[r][:-1]}" for r in odd) +
                                "; pull the draft model on every machine (or pass --drafter none to all) and give all "
                                "the same flags")
