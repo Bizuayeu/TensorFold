@@ -9,8 +9,8 @@ Kimi delta attention, sparse MLA and MoE blocks mix four residual streams.
 
 On CUDA GLM-5.3-Flash runs on two ranks from Brandon M. Music's EXL3/TR3 checkpoint
 (`brandonmusic/GLM-5.3-Flash-tr3-4bpw`, re-hosted as `Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw`; experimental;
-[EXL3](#exl3)), from NVIDIA's ModelOpt NVFP4 checkpoint (`nvidia/GLM-5.3-Flash-NVFP4`, untested on the real weights;
-[NVFP4](#nvfp4)) or from the MLX 4-bit checkpoint, the portable option that a 256 GB Mac serves too.
+[EXL3](#exl3)), from NVIDIA's ModelOpt NVFP4 checkpoint (`nvidia/GLM-5.3-Flash-NVFP4`; [NVFP4](#nvfp4)) or from
+the MLX 4-bit checkpoint, the portable option that a 256 GB Mac serves too.
 `tensorfold serve` loads the checkpoint you name; it picks none by itself. Prompt precision does not change here: no
 checkpoint has an FP8 prompt kernel, so `--prefill-fp8` is refused.
 
@@ -58,7 +58,10 @@ stay fp32 as stored. `--precision checkpoint`
 (FP4 rows) is refused when named, since the grouped expert kernel has no input-scale path. The MTP layer's 288 BF16
 routed experts are packed to NVFP4 at load by ModelOpt's recipe, about 4.85 GiB less a rank; they only draft, and
 verification never reads them, so replies are unchanged. The visual tower is not loaded. The startup estimate is
-about 91 GiB of weights a rank. Speed, capacity and long-context qualification on the real weights are TBD.
+about 91 GiB of weights a rank. On two DGX Sparks (GB10, 128 GB each) with MTP drafts only, `--context 0`
+allocated a 334,264- to 357,585-token window, short prompts decoded at 29.6 / 27.8 / 33.8 / 27.6 tok/s (code and
+chat, sampled and greedy, 64 tokens, median of 5 seeds), and drafted replies equaled `"draft": false` ones (15 of
+15, prompts of 14 to 32,762 tokens). Long-context qualification is TBD.
 
 ### Draft policies
 
