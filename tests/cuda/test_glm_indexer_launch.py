@@ -1,4 +1,4 @@
-"""The indexer's launch shapes (rows a scoring program) never change a row's pool scores, chosen
+"""The indexer's launch shapes (rows a scoring program, pool columns scored) never change a row's pool scores, chosen
 pools or tokens: bf16 and TF_GLM_KV=fp8 pooled keys, decode windows and prompt chunks."""
 
 import pytest
@@ -60,3 +60,41 @@ def test_select_tokens_lists_do_not_depend_on_rows_a_program(monkeypatch, fp8, p
     assert torch.equal(got[1], want[1]) and bool((got[1] > 0).any())
     assert torch.equal(got[0], want[0])
 
+
+@pytest.mark.parametrize("pos, rows, np_max, want", [
+    (None, 512, 65536, 65536),          # a captured graph's rows: positions on the device, every bucket column
+    (2047, 64, 1024, 527),              # the last row's complete pools
+    (1000, 64, 1024, 512),              # selection reads at least TOPK_POOLS columns
+    (100, 4, 300, 300),                 # never past the bucket
+    (260096 + 1536, 512, 131072, 65536),
+])
+def test_score_columns_are_the_columns_selection_reads(pos, rows, np_max, want):
+    from tensorfold.families.glm5_next.cuda import sparse
+
+    assert sparse.score_columns(pos, rows, np_max) == want
+
+
+@cuda
+@pytest.mark.parametrize("fp8", [False, True])
+@pytest.mark.parametrize("pos, R", [(2047, 64), (9000, 300), (262144 - 2048, 2048), (262144 - 1024, 1024)])
+def test_selection_reads_only_scored_columns(monkeypatch, fp8, pos, R):
+    """Each block's pool columns past score_columns' hold NaN (the highest key, were they read): every row's tokens
+    and count are the ones of scoring the bucket's every column."""
+    from tensorfold.families.glm5_next.cuda import sparse
+
+    qi, wts, pk, pos_dev = _inputs(pos, R, fp8, pools=1 << 18)
+    np_max = pk.shape[0] - 2
+    assert sparse.pool_bucket(pos, R, np_max) > (pos + R) // 4 + 1           # columns past the visible pools
+    with monkeypatch.context() as m:
+        m.setattr(sparse, "score_columns", lambda pos, rows, np_max: np_max)
+        want = sparse.select_tokens(qi, wts, pk, pos, R, np_max, pos_dev)
+    empty = torch.empty
+
+    def nan_empty(*a, **k):
+        t = empty(*a, **k)
+        return t.fill_(float("nan")) if t.dtype == torch.float32 else t
+    with monkeypatch.context() as m:
+        m.setattr(torch, "empty", nan_empty)
+        got = sparse.select_tokens(qi, wts, pk, pos, R, np_max, pos_dev)
+    assert torch.equal(got[1], want[1]) and bool((got[1] > 0).any())
+    assert torch.equal(got[0], want[0])
