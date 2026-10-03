@@ -176,7 +176,7 @@ class GlmEngine:
         # exchanges alike
         mine = [int(drafter is not None), capacity, int(long_context), int(serial_only), int(LATENT),
                 prefill_rows, int(self.mtp_on), int(DRAFT_RING), KV_KINDS.index(self.kv), *map(int, overlap.settings()),
-                reduce.MODES.index(reduce.settings())]
+                reduce.MODES.index(reduce.settings(comm=self.comm))]
         # other conversations' kept prompts get what the window leaves, at most TF_GLM_CACHE_GIB, the same on every rank
         plan = self.capacity_plan
         wanted = int(float(os.environ.get("TF_GLM_CACHE_GIB", "3")) * 2 ** 30)

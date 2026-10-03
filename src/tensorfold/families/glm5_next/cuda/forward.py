@@ -140,7 +140,7 @@ class Buffers:
         self.top_k = c.top_k
         # a prompt buffer's exchanges reduce-scattered, and with split its hc glue by rows (TF_GLM_PREFILL_REDUCE,
         # ``reduce``)
-        mode = reduce.settings() if prefill and w.world > 1 else "gather"
+        mode = reduce.settings(comm=getattr(w, "comm", None)) if prefill and w.world > 1 else "gather"
         self.scatter, self.split = mode != "gather", mode == "split"
         if self.scatter and not hasattr(w.comm, "send_recv"):
             raise ValueError(f"TF_GLM_PREFILL_REDUCE={mode}: the communicator has no send_recv")
