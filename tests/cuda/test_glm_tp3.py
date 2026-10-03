@@ -4,10 +4,10 @@ of 1,280) while two ranks take halves, MLX 4-bit and NVFP4. Rank 0 serves, the o
 
 Inside three ranks: drafted replies equal serial ones and leave the same caches on every rank, a resumed prompt
 equals a fresh prefill, and any prompt chunking (pieced exchanges included) leaves the same bits; dense and past the
-dense limit, bf16 and fp8 latents, a chunk's partials gathered or reduce-scattered (TF_GLM_PREFILL_REDUCE),
-whose bits are the same. Three ranks and two cut the sums differently, so their bits differ: each is held
-to an FP32 head over its own final rows (every vocabulary id gathered into its place) and to the other by how far
-their final rows differ. Decode windows run eager here (the exchanges wait on the host);
+dense limit, bf16 and fp8 latents, a chunk's partials gathered, reduce-scattered or reduce-scattered with each rank
+gluing its own rows (TF_GLM_PREFILL_REDUCE), whose bits are the same. Three ranks and two cut the sums differently,
+so their bits differ: each is held to an FP32 head over its own final rows (every vocabulary id gathered into its
+place) and to the other by how far their final rows differ. Decode windows run eager here (the exchanges wait on the host);
 ``test_three_rank_shapes_capture_their_graphs`` captures them on rank 0's and rank 2's shapes, one rank standing in
 for three."""
 
@@ -106,7 +106,7 @@ def checkpoints(tmp_path_factory):
 
 
 CASES = [(q, c, kv, red) for q in ("mlx", "nvfp4") for c in (None, LONG) for kv in ("bf16", "fp8")
-         for red in ("gather", "scatter")]
+         for red in ("gather", "scatter", "split")]
 
 
 @pytest.fixture(scope="module", params=CASES,
@@ -118,7 +118,7 @@ def three(request, checkpoints):
         mp.setenv("TF_GLM_PREFILL_REDUCE", red)
         ranks = Ranks(checkpoints[quant], 3, **({"context": context} if context else {}))
     assert [e.w.vocab_spans for e in ranks.engines] == [[(0, 448), (448, 896), (896, 1280)]] * 3
-    assert [e.e.pbuf.scatter for e in ranks.engines] == [red == "scatter"] * 3
+    assert [(e.e.pbuf.scatter, e.e.pbuf.split) for e in ranks.engines] == [(red != "gather", red == "split")] * 3
     ranks.context, ranks.reduce = context, red
     yield ranks
     del ranks
@@ -191,8 +191,9 @@ def test_prompt_chunks_leave_the_same_state(three, monkeypatch):
 
 
 def _prefill_bits(ranks: Ranks, prompt, rows: int, monkeypatch, reduce: str, on: str, pieces: str) -> list:
-    """Every rank's first token, caches (the MTP head's too), its last chunk's pieces and the point-to-point exchanges
-    of a fresh prompt buffer of ``rows`` rows prefilling ``prompt`` under the given TF_GLM_PREFILL_* settings."""
+    """Every rank's first token, caches (the MTP head's too), its last chunk's pieces, the point-to-point exchanges,
+    the rows it glued (hc_post) in its last chunk and its layer count, of a fresh prompt buffer of ``rows`` rows
+    prefilling ``prompt`` under the given TF_GLM_PREFILL_* settings."""
 
     from tensorfold.families.glm5_next.cuda.decode import Engine, prefill
 
@@ -206,30 +207,63 @@ def _prefill_bits(ranks: Ranks, prompt, rows: int, monkeypatch, reduce: str, on:
         e.w.comm.calls.clear()
         first = prefill(d, prompt, None)
         st = d.st
-        cut = len(d.pbuf.overlap.cut) if d.pbuf.overlap is not None else 0
-        out = first, _caches(d) + [st.mtp_kc[:st.mtp_len].clone()], cut, e.w.comm.calls.get("send_recv", 0)
+        ov = d.pbuf.overlap
+        cut, glued = (len(ov.cut), ov.glued) if ov is not None else (0, 0)
+        out = (first, _caches(d) + [st.mtp_kc[:st.mtp_len].clone()], cut, e.w.comm.calls.get("send_recv", 0), glued,
+               len(e.w.layers))
         del d
         return out
 
     return ranks.each(fn)
 
 
-SETTINGS = [("scatter", "0", "4"), ("scatter", "1", "1"), ("scatter", "1", "4"), ("gather", "1", "4")]
+SETTINGS = [("scatter", "0", "4"), ("scatter", "1", "1"), ("scatter", "1", "4"), ("gather", "1", "4"),
+            ("split", "0", "4"), ("split", "1", "1"), ("split", "1", "4")]
 
 
-def _same_bits_both_ways(ranks: Ranks, prompt, chunks, monkeypatch) -> None:
+def _glued(rows: int, world: int, rank: int, red: str, on: str, pieces: str) -> int:
+    """The rows ``rank`` runs hc_post over at one exchange of a ``rows``-row chunk: with split its share of each piece
+    of at least ``world`` rows and all of a shorter one; else every row of a pieced chunk; 0 in the unpieced loop."""
+
+    from tensorfold.families.glm5_next.cuda.overlap import ranges
+    from tensorfold.families.glm5_next.cuda.reduce import shares
+
+    split = red == "split"
+    cut = ranges(rows, int(pieces) if on == "1" else 1)
+    if len(cut) < 2 and not (split and rows >= world):
+        return 0
+    out = 0
+    for lo, hi in cut:
+        a, b = shares(hi - lo, world)[rank] if split and hi - lo >= world else (lo, hi)
+        out += b - a
+    return out
+
+
+def _same_bits_both_ways(ranks: Ranks, prompt, chunks, monkeypatch) -> dict:
+    """Every SETTINGS entry against gather unpieced, for each prompt buffer size of ``chunks``: the first token and
+    every cache on every rank, point-to-point exchanges only off gather, the last chunk's pieces, and the rows each
+    rank glued at its 2 x layers exchanges (a split chunk of at least ``world`` rows glues fewer than all: Mia 0067)."""
+
     from tensorfold.families.glm5_next.cuda.overlap import ranges
 
+    world = ranks.world
     want = _prefill_bits(ranks, prompt, chunks[0], monkeypatch, "gather", "0", "4")
-    assert all(n == 0 for *_, n in want)
+    assert all(p2p == 0 for _, _, _, p2p, _, _ in want)
+    runs = {}
     for rows in chunks:
         last = len(prompt) - (len(prompt) - 1) // rows * rows
         for red, on, pieces in SETTINGS:
-            got = _prefill_bits(ranks, prompt, rows, monkeypatch, red, on, pieces)
-            for (a, x, _, _), (b, y, cut, p2p) in zip(want, got):
-                assert a == b and _equal(x, y), (rows, red, on, pieces)
-                assert (p2p > 0) == (red == "scatter"), (rows, red, p2p)
-                assert cut == (len(ranges(last, int(pieces))) if on == "1" else 0), (rows, on, pieces, cut)
+            got = runs[rows, red, on, pieces] = _prefill_bits(ranks, prompt, rows, monkeypatch, red, on, pieces)
+            for rank, ((a, x, *_), (b, y, cut, p2p, glued, layers)) in enumerate(zip(want, got)):
+                case = (rows, red, on, pieces, rank)
+                assert a == b and _equal(x, y), case
+                assert (p2p > 0) == (red != "gather"), (case, p2p)
+                pieced = len(ranges(last, int(pieces))) if on == "1" else (1 if red == "split" else 0)
+                assert cut == pieced, (case, cut)
+                assert glued == 2 * layers * _glued(last, world, rank, red, on, pieces), (case, glued)
+                if red == "split" and last >= world:
+                    assert 0 < glued < 2 * layers * last, (case, glued)
+    return runs
 
 
 def test_scattered_prompt_sums_leave_the_gathered_bits(three, monkeypatch):
@@ -238,8 +272,8 @@ def test_scattered_prompt_sums_leave_the_gathered_bits(three, monkeypatch):
     and 498 (a last chunk of 1 and 2 rows: fewer rows than ranks gather), 7; past the dense limit 2,048 (then 352, in
     three pieces) and 2,399 (then 1)."""
 
-    if three.reduce == "scatter":
-        pytest.skip("the gather instance builds both")
+    if three.reduce != "gather":
+        pytest.skip("the gather instance builds every setting")
     size, chunks = (500, (500, 499, 498, 7)) if three.context is None else (2400, (2048, 2399))
     prompt = [int(t) for t in np.random.default_rng(61).integers(0, 1000, size=size)]
     _same_bits_both_ways(three, prompt, chunks, monkeypatch)
@@ -373,6 +407,19 @@ def test_two_ranks_scattered_prompt_sums_leave_the_gathered_bits(worlds, monkeyp
     _same_bits_both_ways(ranks[2], prompt, (500, 499), monkeypatch)
 
 
+def test_a_2048_row_chunk_splits_its_glue_over_three_ranks(worlds, monkeypatch):
+    """Mia 0067: 2,048 rows do not divide by three (3 x 683 = 2,049), and a split that wants equal shares silently
+    did not split. Here the shares are 683, 683 and 682 rows an exchange unpieced (171, 171, 170 of each 512-row
+    piece in four), with gather's bits, and every SETTINGS entry likewise."""
+
+    _, _, ranks = worlds
+    prompt = [int(t) for t in np.random.default_rng(71).integers(0, 1000, size=2048)]
+    runs = _same_bits_both_ways(ranks[3], prompt, (2048,), monkeypatch)
+    layers = runs[2048, "split", "0", "4"][0][-1]
+    assert [r[4] for r in runs[2048, "split", "0", "4"]] == [2 * layers * n for n in (683, 683, 682)]
+    assert [r[4] for r in runs[2048, "split", "1", "4"]] == [2 * layers * 4 * n for n in (171, 171, 170)]
+
+
 def test_sampled_replies_repeat(worlds):
     _, _, ranks = worlds
     rk = ranks[3]
@@ -436,11 +483,12 @@ def test_a_rank_reducing_otherwise_is_named(checkpoints, monkeypatch):
         run_ranks(start, 3)
 
 
-def test_scatter_needs_point_to_point(checkpoints, monkeypatch):
+@pytest.mark.parametrize("mode", ["scatter", "split"])
+def test_scatter_needs_point_to_point(checkpoints, monkeypatch, mode):
     from tensorfold.families.glm5_next.cuda.engine import GlmEngine
 
-    monkeypatch.setenv("TF_GLM_PREFILL_REDUCE", "scatter")
-    with pytest.raises(ValueError, match="TF_GLM_PREFILL_REDUCE=scatter: the communicator has no send_recv"):
+    monkeypatch.setenv("TF_GLM_PREFILL_REDUCE", mode)
+    with pytest.raises(ValueError, match=f"TF_GLM_PREFILL_REDUCE={mode}: the communicator has no send_recv"):
         GlmEngine(checkpoints["mlx"], rank=0, master="", port=0, world=3, comm=_TwoCopies(3), graphs=False)
 
 

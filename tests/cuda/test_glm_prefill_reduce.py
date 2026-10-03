@@ -2,7 +2,8 @@
 one GPU (``threadcomm``): every rank's hc_post and MTP residual add over the scattered sums (in slot 0 of gather's
 layout, -0.0 in the others) leave the bits they leave over the gathered partials, for any row count and two or three
 ranks, while a rank receives what the module docstring counts (half of the all-gather's bytes at three ranks, three
-quarters at two)."""
+quarters at two). TF_GLM_PREFILL_REDUCE=split: hc_post over a rank's own rows of every rank's partials, then those
+rows handed to the others, leaves the gathered hc_post's bytes on every row."""
 
 from __future__ import annotations
 
@@ -21,11 +22,12 @@ from tensorfold.families.glm5_next.cuda import glue, reduce  # noqa: E402
 D = 512
 
 
-def test_the_setting_is_gather_or_scatter():
+def test_the_setting_is_gather_scatter_or_split():
     assert reduce.settings({}) == "gather"
     assert reduce.settings({"TF_GLM_PREFILL_REDUCE": ""}) == "gather"
     assert reduce.settings({"TF_GLM_PREFILL_REDUCE": " scatter "}) == "scatter"
-    with pytest.raises(ValueError, match="TF_GLM_PREFILL_REDUCE: gather or scatter, not 'ring'"):
+    assert reduce.settings({"TF_GLM_PREFILL_REDUCE": "split"}) == "split"
+    with pytest.raises(ValueError, match="TF_GLM_PREFILL_REDUCE: gather, scatter or split, not 'ring'"):
         reduce.settings({"TF_GLM_PREFILL_REDUCE": "ring"})
 
 
@@ -63,7 +65,7 @@ def test_scattered_sums_leave_the_gathered_bits(world, rows):
         comb = torch.rand((rows, 16), generator=g, device="cuda")
         res = torch.randn((rows, D), generator=g, device="cuda").to(torch.bfloat16)
         out = {}
-        for mode in reduce.MODES:
+        for mode in ("gather", "scatter"):
             room = torch.full((world * rows * D,), float("nan"), device="cuda")
             comm.received = 0
             got = reduce.sums(comm, part, room, mode == "scatter")
@@ -99,3 +101,41 @@ def test_the_partials_test_the_order():
     ours = ((p[0] + p[1]) + p[2]).to(torch.bfloat16)
     other = (p[0] + (p[1] + p[2])).to(torch.bfloat16)
     assert not torch.equal(ours, other)
+
+
+@pytest.mark.parametrize("world", [2, 3])
+@pytest.mark.parametrize("rows", [3, 4, 7, 128, 500, 2048])
+def test_split_glue_leaves_the_gathered_bits(world, rows):
+    """split: ``owned`` gives each rank every rank's partials of its own rows ([world, n, D], rank order); hc_post over
+    them writes the gathered hc_post's bytes on those rows, and ``share`` fills every rank's other rows with their
+    owners' bytes. A rank owning n rows receives (world - 1) x n x D x 4 bytes, then (R - n) x 4D x 2 (the streams;
+    the engine shares the D-wide normed rows)."""
+
+    def fn(rank, comm):
+        part = _partial(rank, rows)
+        g = torch.Generator(device="cuda").manual_seed(7)
+        x = torch.randn((rows, 4 * D), generator=g, device="cuda").to(torch.bfloat16)
+        post = torch.rand((rows, 4), generator=g, device="cuda")
+        comb = torch.rand((rows, 16), generator=g, device="cuda")
+        want = torch.empty_like(x)
+        room = torch.full((world * rows * D,), float("nan"), device="cuda")
+        glue.hc_post(x, want, reduce.sums(comm, part, room, False), post, comb)
+        lo, hi = reduce.shares(rows, world)[rank]
+        room = torch.full((world * rows * D,), float("nan"), device="cuda")
+        comm.received = 0
+        got = reduce.owned(comm, part, room)
+        owned_bytes = comm.received
+        h = torch.full_like(x, float("nan"))
+        glue.hc_post(x[lo:hi], h[lo:hi], got, post[lo:hi], comb[lo:hi])
+        comm.received = 0
+        reduce.share(comm, [h])
+        return want, h, got.clone(), (lo, hi), owned_bytes, comm.received
+
+    for rank, (want, h, got, (lo, hi), owned_bytes, shared_bytes) in enumerate(run_ranks(fn, world)):
+        n = hi - lo
+        assert got.shape == (world, n, D), rank
+        for k in range(world):          # rank k's partial of these rows, in slot k
+            assert torch.equal(got[k], _partial(k, rows)[lo:hi]), (rank, k)
+        assert torch.equal(h, want), rank
+        assert owned_bytes == (world - 1) * n * D * 4, rank
+        assert shared_bytes == (rows - n) * 4 * D * 2, rank

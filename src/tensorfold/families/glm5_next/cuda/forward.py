@@ -138,16 +138,19 @@ class Buffers:
         self.tap_at: dict[int, list[int]] = {}
         self.experts = c.experts
         self.top_k = c.top_k
-        # a prompt buffer's exchanges reduce-scattered (TF_GLM_PREFILL_REDUCE, ``reduce``)
-        self.scatter = prefill and w.world > 1 and reduce.settings() == "scatter"
+        # a prompt buffer's exchanges reduce-scattered, and with split its hc glue by rows (TF_GLM_PREFILL_REDUCE,
+        # ``reduce``)
+        mode = reduce.settings() if prefill and w.world > 1 else "gather"
+        self.scatter, self.split = mode != "gather", mode == "split"
         if self.scatter and not hasattr(w.comm, "send_recv"):
-            raise ValueError("TF_GLM_PREFILL_REDUCE=scatter: the communicator has no send_recv")
-        # a prompt buffer's exchanges in row pieces on a second stream (TF_GLM_PREFILL_OVERLAP, ``overlap``)
+            raise ValueError(f"TF_GLM_PREFILL_REDUCE={mode}: the communicator has no send_recv")
+        # a prompt buffer's exchanges in row pieces on a second stream (TF_GLM_PREFILL_OVERLAP, ``overlap``); split
+        # drives an unpieced chunk's exchanges through it too, as one piece
         self.overlap = None
         if prefill and w.world > 1:
             on, pieces = overlap.settings()
-            if on:
-                self.overlap = overlap.Overlap(w, self, pieces)
+            if on or self.split:
+                self.overlap = overlap.Overlap(w, self, pieces if on else 1)
 
     def set_taps(self, layers: tuple[int, ...], hidden: int) -> None:
         self.tap_at = {}
@@ -533,7 +536,8 @@ def pieced_layers(w: Weights, st: State, b: Buffers, R: int, nch: int | None, ho
                   cut: Cut | None) -> None:
     """Every layer of a prompt chunk with its exchanges in row pieces (``overlap``, begun): each piece's hc_post,
     DFlash2 taps, final stream mean and next hc_pre once its gather is in. The unpieced loop's kernels on the same
-    rows, so its bits, taps and b.hidden[:R]."""
+    rows, so its bits, taps and b.hidden[:R]. With split each rank runs them over its own rows of a piece and the
+    rows the next step reads (normed rows, taps, b.hidden) go to every rank (``Overlap.glue``'s outs)."""
 
     layers = w.layers
     ov = b.overlap
@@ -558,12 +562,13 @@ def pieced_layers(w: Weights, st: State, b: Buffers, R: int, nch: int | None, ho
                 else:
                     glue.stream_mean(x, b.hidden[lo:hi])
 
+            taps = tuple(b.taps[slot] for slot in b.tap_at.get(layer.index, ()))
             _mixer(layer, w, st, b, R, nch, host_pos, None, cut)
             with prof.timed("hc"):
-                ov.glue(mid)
+                ov.glue(mid, (b.normed,))
             _ffn(layer, w, b, R)
             with prof.timed("hc (layer ends)"):
-                ov.glue(end)
+                ov.glue(end, (b.normed if nxt is not None else b.hidden, *taps))
     finally:
         ov.finish()
 
