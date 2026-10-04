@@ -288,8 +288,8 @@ def engine_x(tmp_path_factory):
 
 @pytest.mark.parametrize("exl3", [False, True], ids=["mlx4", "exl3"])
 def test_estimate_counts_the_latent_paths_kv_b(tmp_path, exl3):
-    """A rank's startup estimate is what its weights hold, the latent path's second copy of kv_b included
-    (``latent.AbsorbQ4`` on MLX 4-bit g64 rows, ``latent.AbsorbW`` in BF16 on EXL3)."""
+    """The latent path's second copy of kv_b (``latent.AbsorbQ4`` on MLX 4-bit g64 rows, ``latent.AbsorbW`` in BF16
+    on EXL3) is in ``nbytes`` and in the startup estimate, at the same size (the whole rank: test_glm_nvfp4)."""
 
     from tensorfold.cuda.capacity import headers
     from tensorfold.cuda.geometry import split_weights
@@ -298,10 +298,15 @@ def test_estimate_counts_the_latent_paths_kv_b(tmp_path, exl3):
 
     _checkpoint(tmp_path, exl3=exl3)
     w = load(tmp_path, rank=0, world=2)
-    kind = latent.AbsorbW if exl3 else latent.AbsorbQ4
-    assert all(isinstance(L.dsa.absorb, kind) for L in w.layers if L.dsa is not None)
-    transform = split_weights(split.rule, w.plan)
-    assert sum(transform(name, info)[0] for name, info in headers(tmp_path).items()) == w.nbytes()
+    dsa = [L.dsa for L in w.layers if L.dsa is not None] + [w.mtp.layer.dsa]
+    held = [a.absorb for a in dsa]
+    assert all(isinstance(h, latent.AbsorbW if exl3 else latent.AbsorbQ4) for h in held)
+    full = w.nbytes()
+    for a in dsa:
+        a.absorb = None
+    on, off = (split_weights(split.rule, w.plan, latent=x) for x in (True, False))
+    copy = sum(on(name, info)[0] - off(name, info)[0] for name, info in headers(tmp_path).items())
+    assert full - w.nbytes() == copy == sum(h.nbytes() for h in held) > 0
 
 
 def _forget(engine) -> None:
