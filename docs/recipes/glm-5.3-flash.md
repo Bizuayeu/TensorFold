@@ -139,6 +139,13 @@ rows to their owners, each owner glues only its own rows and sends the glued row
 each sum, so the bits are `gather`'s. On three DGX Sparks a
 38,960-token prompt fills at 1,396 tok/s with `gather`, 1,491 with `scatter` and 1,671 with `split`.
 
+`TF_GLM_HEAT_HIGH` and `TF_GLM_HEAT_LOW` (degrees C, set both or neither, every rank the same; unset, off) let a long
+prefill cool down: before every prompt chunk each rank reads its hottest thermal zone (`TF_GLM_HEAT_ZONES`, a glob of
+millidegree files, default `/sys/class/thermal/thermal_zone*/temp`) and the ranks all-gather that number. While the
+hottest of all is above HIGH, every rank waits together, reading again every 2 s, until it is at or below LOW; the
+reply's `heat_wait_s` says how long. The wait changes when chunks run, not their bits. There is no cap: a room that
+stays hot holds the request. On three DGX Sparks a 1,048,576-token prefill took one host to 94 C in six minutes.
+
 Measured on two DGX Sparks (GB10, 128 GB each) with the MLX 4-bit checkpoint, MTP drafts only,
 `--context 262144`, a synthetic codebase with one hidden fact, cold prompts:
 
