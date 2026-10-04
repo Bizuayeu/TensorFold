@@ -93,6 +93,19 @@ def test_the_wait_ends_on_the_gathered_maximum_not_a_local_reading(zones):
     assert comm.sizes == [[1] * 4] * 3
 
 
+def test_a_wait_is_printed_where_the_engine_prints(zones, capsys):
+    """Start, a line a minute while it lasts, and end, as [tensorfold] lines on stdout (no logging setup needed)."""
+
+    clock, seq = Clock(), iter([93.0] + [90.0] * 31 + [87.5])
+    h = heat.Heat(92, 88, zones, sleep=clock.sleep, clock=lambda: clock.now)
+    h.read = lambda: next(seq)
+    assert h.wait(lambda t: t) == 64.0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines == ["[tensorfold] heat: hottest zone 93.0 C above 92 C; the prefill waits for 88 C",
+                     "[tensorfold] heat: waiting 60 s, hottest zone 90.0 C",
+                     "[tensorfold] heat: 87.5 C after 64 s; the prefill goes on"]
+
+
 def test_one_rank_reads_its_own_zones():
     class W:
         comm, world = None, 1
