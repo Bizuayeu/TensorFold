@@ -130,7 +130,8 @@ def test_a_server_without_the_tower_refuses_images(engine):
 
 
 # -- three ranks (test_glm_tp3's threads on one GPU) -----------------------------------------------------------------
-from test_glm_tp3 import LONG as TP3_LONG, SHAPE, Ranks, _caches, _equal  # noqa: E402
+from test_glm_tp3 import LONG as TP3_LONG  # noqa: E402
+from test_glm_tp3 import SHAPE, Ranks, _caches, _equal  # noqa: E402
 from threadcomm import run_ranks  # noqa: E402
 
 TP3_CASES = [("nvfp4", None, "bf16", "split"), ("nvfp4", TP3_LONG, "fp8", "split"), ("mlx", None, "fp8", "scatter"),
@@ -213,7 +214,7 @@ def test_an_image_prompt_on_three_ranks_replies_as_its_text_twin(three, sampling
     try:
         for draft in (False, True):
             three.forget()
-            got, stats = three.serve(lambda e: _ask(e, image, sampling, draft, object()))
+            got, stats = three.serve(lambda e, draft=draft: _ask(e, image, sampling, draft, object()))
             assert got == want and stats["cached"] == 0, draft
             assert all(_equal(a, b) for a, b in zip(caches, three.each(lambda r, e: _caches(e.e)))), draft
             assert all(not e.cache for e in three.engines), draft            # no image prompt state is kept

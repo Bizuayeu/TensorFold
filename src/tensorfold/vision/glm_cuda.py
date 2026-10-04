@@ -351,6 +351,7 @@ def share_encoded(payload: EncodedVision | None, rank: int, comm, prompt, image_
     at most world x a chunk's rows at once, whatever the request's budget; rank 0 keeps its own tensor."""
 
     import torch
+
     from tensorfold.cuda.geometry import PREFILL_ROWS
 
     rows = placeholder_rows(prompt, image_token)
