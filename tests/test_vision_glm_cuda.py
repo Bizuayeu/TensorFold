@@ -289,6 +289,7 @@ def test_the_loader_reads_the_tower_from_checkpoint_bytes(tmp_path, monkeypatch,
               "projection_intermediate_size": 48, "patch_size": 4}
     (tmp_path / "config.json").write_text(json.dumps({"model_type": "glm5_next", "image_token_id": 99,
                                                       "vision_config": vision, "text_config": {"hidden_size": 32}}))
+    (tmp_path / "processor_config.json").write_text(json.dumps({"image_processor": {"max_image_tokens": 8000}}))   # GLM-5.3-Flash's image cap
     torch.manual_seed(1)
     built = Glm5NextVisionModel(Glm5NextVisionConfig(**vision)).eval()
     frequencies = {k: v.clone() for k, v in built.rotary_pos_emb.named_buffers()}

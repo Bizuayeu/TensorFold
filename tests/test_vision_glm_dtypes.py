@@ -39,6 +39,7 @@ def write_checkpoint(path, mode="spec"):
 
     (path / "config.json").write_text(json.dumps({"model_type": "glm5_next", "image_token_id": 99,
                                                   "vision_config": VISION, "text_config": {"hidden_size": 32}}))
+    (path / "processor_config.json").write_text(json.dumps({"image_processor": {"max_image_tokens": 8000}}))    # GLM-5.3-Flash's image cap
     torch.manual_seed(3)
     model = Glm5NextVisionModel(Glm5NextVisionConfig(**VISION))
     stored = {}
