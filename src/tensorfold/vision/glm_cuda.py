@@ -10,12 +10,12 @@ from pathlib import Path
 
 from tensorfold.cuda.capacity import SIZES
 
-from .qwen_cuda import WORKSPACE_BYTES, EncodedVision, float_headers, image_runs
+from .qwen_cuda import EncodedVision, float_headers, image_runs
 
-# --vision-offload: the tower visits the GPU per image, so rank 0's budget keeps room for its bytes plus the
-# activations of the largest accepted image. Qwen's tower measured 1.35 GiB over its weights on a 4,096-token image;
-# GLM's has not been measured, so this takes 2 GiB.
-OFFLOAD_ACTIVATION_BYTES = 2 * 1024**3
+# GLM-5.3-Flash's BF16 tower on GB10, one image a call through SDPA's flash or efficient kernels: 40.8-41.0 KiB a
+# patch over its weights at 8,192, 16,384 and 32,000 patches, and 32 MiB more on a process's first call
+# (records/20261004-e1-vision/measure_tower.log); rounded up to cover both
+PATCH_BYTES = 43 * 1024
 
 
 def vision_config(model_dir: str | Path) -> dict:
@@ -114,18 +114,32 @@ def weight_transform(base, enabled: bool, rank: int, offload: bool = False):
     return transform
 
 
-def capacity_geometry(base, model_dir, enabled: bool, rank: int, offload: bool = False):
+def workspace_bytes(config: dict, image_tokens: int, visual_tokens: int) -> int:
+    """Rank 0's scratch while it encodes a request: the largest tower call (one full-size image, or the whole budget if
+    smaller) and the request's features twice (the runs' outputs and their join)."""
+
+    call = min(image_tokens, visual_tokens) * config["spatial_merge_size"] ** 2
+    return call * PATCH_BYTES + 2 * visual_tokens * config["out_hidden_size"] * 2
+
+
+def capacity_geometry(base, model_dir, enabled: bool, rank: int, offload: bool = False,
+                      visual_tokens: int | None = None):
+    """``visual_tokens``: what a request's images share (--vision-image-tokens), by default one image's cap."""
+
     def geometry(text):
         from tensorfold.cuda.capacity import Geometry
 
         result = base(text)
         if not enabled:
             return result
-        tower_bytes = checkpoint_vision(model_dir)[1] if rank == 0 else 0
-        if offload and rank == 0:
-            reserve = tower_bytes + OFFLOAD_ACTIVATION_BYTES           # the tower's visit to the GPU
+        if rank == 0:
+            config, tower_bytes = checkpoint_vision(model_dir)
+            cap = image_cap(model_dir)
+            reserve = workspace_bytes(config, cap, visual_tokens or cap)
+            if offload:
+                reserve += tower_bytes                                  # the tower's visit to the GPU
         else:
-            reserve = WORKSPACE_BYTES if rank == 0 else 128 * 1024**2     # rank one holds the received features
+            reserve = 128 * 1024**2                                     # rank one holds the received features
         return Geometry(lambda slots: result.bytes_at(slots) + reserve, result.reserve, result.minimum_slots)
     return geometry
 

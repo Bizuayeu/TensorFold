@@ -165,7 +165,8 @@ class GlmEngine:
         # --vision: rank 0 holds the image tower and its workspace, the others the features they receive
         geometry = capacity_geometry(lambda text: mla_geometry(text, world, MAX_ROWS, minimum_slots=DENSE_CAPACITY,
                                                                latent=LATENT, mtp=self.mtp_on, kv=self.kv),
-                                     model_dir, vision, rank, offload=vision_offload)
+                                     model_dir, vision, rank, offload=vision_offload,
+                                     visual_tokens=vision_image_tokens)
         self.capacity_plan = admit(model_dir, context if explicit else cfg.dense_limit, explicit, torch, geometry,
                                    vision_weights(weights_estimate, vision, rank, vision_offload), rank=rank,
                                    world=world, gather=self._gather_ints,

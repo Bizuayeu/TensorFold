@@ -257,18 +257,34 @@ def test_the_thinking_off_template_passes_the_image_switch_on():
     assert seen[0]["allow_images"] is True
 
 
+def test_rank_zeros_workspace_is_the_measured_tower_peak_and_the_features():
+    from tensorfold.vision.glm_cuda import PATCH_BYTES, workspace_bytes
+
+    real = {"spatial_merge_size": 2, "out_hidden_size": 4096}
+    # one 8,000-token image: 32,000 patches in one tower call, and the features twice (the runs and their join)
+    assert workspace_bytes(real, 8000, 8000) == 32000 * PATCH_BYTES + 2 * 8000 * 4096 * 2
+    assert workspace_bytes(real, 8000, 65536) == 32000 * PATCH_BYTES + 2 * 65536 * 4096 * 2   # still one image a call
+    assert workspace_bytes(real, 8000, 2048) == 8192 * PATCH_BYTES + 2 * 2048 * 4096 * 2      # a smaller budget
+    # GB10 (records/20261004-e1-vision/measure_tower.log): an 8,000-token image peaked 1,281.6 MiB over the tower,
+    # and a process's first call 32 MiB more
+    assert workspace_bytes(real, 8000, 8000) >= (1281.6 + 32) * 2**20
+
+
 def test_offloaded_towers_count_a_visit_not_residence(tmp_path):
     from tensorfold.cuda.capacity import Geometry
-    from tensorfold.vision.glm_cuda import OFFLOAD_ACTIVATION_BYTES
-    from tensorfold.vision.qwen_cuda import WORKSPACE_BYTES
+    from tensorfold.vision.glm_cuda import workspace_bytes
 
     _, tower = _checkpoint(tmp_path)
     base = lambda text: Geometry(lambda slots: slots * 64, 8)
     resident = capacity_geometry(base, tmp_path, True, 0)({}).needed(32)
     offloaded = capacity_geometry(base, tmp_path, True, 0, offload=True)({}).needed(32)
     plain = capacity_geometry(base, tmp_path, False, 0)({}).needed(32)
-    assert offloaded - plain == tower + OFFLOAD_ACTIVATION_BYTES and offloaded < resident + tower
-    assert resident - plain == WORKSPACE_BYTES
+    work = workspace_bytes(VISION, 8000, 8000)        # the checkpoint's cap, and a request of that much
+    # offloaded, the tower leaves the weights' count (below) for the visit's: the same workspace beside it
+    assert offloaded - plain == tower + work and offloaded == resident + tower
+    assert resident - plain == work
+    budget = capacity_geometry(base, tmp_path, True, 0, visual_tokens=2048)({}).needed(32)
+    assert budget - plain == workspace_bytes(VISION, 8000, 2048)
     assert capacity_geometry(base, tmp_path, True, 1, offload=True)({}).needed(32) == \
         capacity_geometry(base, tmp_path, True, 1)({}).needed(32)
     info = {"shape": [8, 8], "dtype": "BF16"}
