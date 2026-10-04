@@ -137,10 +137,13 @@ def _most(total: int, world: int, unit: int = 1) -> int:
     return (end - first) * unit
 
 
-def split_weights(rule, plan):
+def split_weights(rule, plan, *, latent: bool = True):
     """GLM's rank (``plan``, the family's ``split.ShardPlan``) of a checkpoint as loaded; ModelOpt NVFP4 projections
     as stored (a routed expert's fp32 scale held per expert, a dense one's a number), the MTP layer's BF16 routed
-    experts at the NVFP4 size they are packed to."""
+    experts at the NVFP4 size they are packed to. With ``latent`` (``TF_GLM_LATENT``) each DSA layer's kv_b is held
+    twice: its key and value rows, and the latent path's per-head copy (``_absorbed``)."""
+
+    cfg = plan.cfg
 
     def transform(name: str, info: dict) -> tuple[int, int]:
         kind = rule(name)
@@ -163,11 +166,24 @@ def split_weights(rule, plan):
         cast = name.endswith((".A_log", ".dt_bias", ".hc_attn_base", ".hc_attn_scale", ".hc_ffn_base",
                               ".hc_ffn_scale", ".e_score_correction_bias"))
         total = padded(info, shape, float32=cast, name=name)
+        if latent and ".self_attn.kv_b_proj." in name:
+            total += _absorbed(name, info, shape, cfg)
         if name == "lm_head.weight" and info["dtype"] in ("BF16", "F16", "F32"):
             # the additional 4-bit draft head, its rows padded to 128 as ``qmm.pack`` pads them
             total += -(-shape[0] // 128) * 128 * math.prod(shape[1:]) * 9 // 16
         return total, 0
     return transform
+
+
+def _absorbed(name: str, info: dict, shape: list[int], cfg) -> int:
+    """The latent path's copy of a rank's kv_b rows: BF16 for BF16 checkpoints (``AbsorbW``), MLX 4-bit rows of
+    group 64 as stored and unpadded (``AbsorbQ4``), other groups dequantized to BF16 (``AbsorbW``)."""
+
+    if cfg.quant in ("exl3", "nvfp4"):
+        return math.prod(shape) * 2 if name.endswith(".weight") else 0
+    if cfg.group_size == 64:
+        return math.prod(shape) * itemsize(info, name)
+    return shape[0] * shape[1] * (32 // cfg.bits) * 2 if name.endswith(".weight") else 0
 
 
 def kv_bytes(head_dim: int, bits: int = 16) -> int:

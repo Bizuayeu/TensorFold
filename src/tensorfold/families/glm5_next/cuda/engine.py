@@ -168,7 +168,7 @@ class GlmEngine:
             raise ValueError("TF_GLM_KV=fp8 holds the latent cache: it needs TF_GLM_LATENT=1")
         # TF_GLM_MTP off: the MTP layer's tensors, caches and buffers are neither loaded nor estimated
         self.mtp_on = mtp_head(drafter is not None, serial_only, cfg.mtp_layers)
-        weights_estimate = split_weights(rule, ShardPlan(cfg, world, rank))
+        weights_estimate = split_weights(rule, ShardPlan(cfg, world, rank), latent=LATENT)
         if not self.mtp_on:
             weights_estimate = without_mtp(weights_estimate, cfg.layers)
         # --vision: rank 0 holds the image tower and its workspace, the others the features they receive

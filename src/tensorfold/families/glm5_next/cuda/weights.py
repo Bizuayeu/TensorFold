@@ -253,7 +253,7 @@ class Weights:
                 seen.add(t.data_ptr())
                 total += t.numel() * t.element_size()
             elif isinstance(t, (Q4, B16, grouped.Experts, Exl3Experts, nvx.Experts4, Fp4Linear, HCW, KDAW, DSAW, MLPW,
-                                MoEW, LayerW, MTPW, IndexW)):
+                                MoEW, LayerW, MTPW, IndexW, latent.AbsorbW, latent.AbsorbQ4)):
                 for v in vars(t).values():
                     add(v)
             elif isinstance(t, (list, tuple)):
