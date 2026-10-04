@@ -11,16 +11,13 @@ every ``EVERY`` seconds. There is no cap on a wait: a room that stays hot holds 
 from __future__ import annotations
 
 import glob
-import logging
 import os
 import time
 from collections.abc import Callable
 
-log = logging.getLogger(__name__)
-
 ZONES = "/sys/class/thermal/thermal_zone*/temp"
 EVERY = 2.0              # s between readings while waiting (the period of the hosts' thermal watch)
-REPORT = 60.0            # s between log lines while a wait goes on
+REPORT = 60.0            # s between lines while a wait goes on (printed like the engine's other lines, on each rank)
 
 
 class Heat:
@@ -63,13 +60,14 @@ class Heat:
         if top <= self.high:
             return 0.0
         t0 = last = self.clock()
-        log.info("heat: hottest zone %.1f C above %.1f C; the prefill waits for %.1f C", top, self.high, self.low)
+        print(f"[tensorfold] heat: hottest zone {top:.1f} C above {self.high:g} C; the prefill waits for "
+              f"{self.low:g} C", flush=True)
         while top > self.low:
             self.sleep(EVERY)
             top = hottest(self.read())
             if self.clock() - last >= REPORT:
                 last = self.clock()
-                log.info("heat: waiting %.0f s, hottest zone %.1f C", last - t0, top)
+                print(f"[tensorfold] heat: waiting {last - t0:.0f} s, hottest zone {top:.1f} C", flush=True)
         waited = self.clock() - t0
-        log.info("heat: %.1f C after %.0f s; the prefill goes on", top, waited)
+        print(f"[tensorfold] heat: {top:.1f} C after {waited:.0f} s; the prefill goes on", flush=True)
         return waited
