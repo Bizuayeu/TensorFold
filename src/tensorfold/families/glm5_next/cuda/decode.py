@@ -114,6 +114,8 @@ class Engine:
         self.last_hidden: torch.Tensor | None = None
         self.constraint = self.window = None            # a request's grammar, and the next sample's rows under it
         self.vote: StopVote | None = None               # rides on every verify sample's all-gather
+        self.heat = None                                # heat.Heat: a prefill's waits between chunks
+        self.heat_wait = 0.0                            # s the last prefill waited
         self.draft_n = w.head.n
         self.graphs = None
         self.replays = {"main": 0, "sparse": 0, "mtp": 0, "sparse_mtp": 0, "eager": 0}   # steps by path
@@ -390,8 +392,12 @@ def prefill(e: Engine, prompt: Sequence[int], sampling: Sampling | None, *, mtp:
         raise ValueError("a kept prefix needs a callback and a point in the prompt's prefill")
     kept = resume if keep_at == begin else None
     last = None
+    heat = getattr(e, "heat", None)
+    e.heat_wait = 0.0
     prof.active = True
     for start in range(begin, len(prompt), e.prefill_rows):
+        if heat is not None:                 # every rank, before every chunk: the same gathers on all
+            e.heat_wait += heat.wait(_hottest(w, st.conv.device))
         chunk = list(prompt[start:start + e.prefill_rows])
         R = len(chunk)
         point = keep_at - start if keep_at is not None else 0
@@ -430,6 +436,20 @@ def prefill(e: Engine, prompt: Sequence[int], sampling: Sampling | None, *, mtp:
     first = e.sample(last, [len(prompt)], sampling)[0]
     e.follow([first])
     return first
+
+
+def _hottest(w: Weights, device):
+    """A reading in degrees C -> the highest of every rank's (an all-gather of one float32 word)."""
+
+    if w.comm is None:
+        return lambda t: t
+
+    def gathered(t: float) -> float:
+        got = torch.empty(w.world, dtype=torch.float32, device=device)
+        w.comm.all_gather(torch.full((1,), t, dtype=torch.float32, device=device), got)
+        return float(got.max())
+
+    return gathered
 
 
 def _prompt_rows(e: Engine, b: Buffers, prompt: Sequence[int], start: int, R: int, collector) -> None:

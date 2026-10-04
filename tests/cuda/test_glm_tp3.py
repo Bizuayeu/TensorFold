@@ -511,7 +511,29 @@ def test_a_rank_reducing_otherwise_is_named(checkpoints, monkeypatch):
         odd.on = r == 2
         GlmEngine(checkpoints["mlx"], rank=r, master="", port=0, world=3, comm=comm, graphs=False)
 
-    with pytest.raises(RuntimeError, match=r"different settings.*TF_GLM_PREFILL_REDUCE\): rank 0 \[.*\], rank 2 \["):
+    with pytest.raises(RuntimeError, match=r"different settings.*TF_GLM_HEAT_LOW\): rank 0 \[.*\], rank 2 \["):
+        run_ranks(start, 3)
+
+
+def test_a_rank_waiting_on_other_heat_bands_is_named(checkpoints, monkeypatch, tmp_path):
+    """TF_GLM_HEAT_HIGH/LOW on rank 1 only is refused at startup: every rank must gather the same readings."""
+
+    import threading
+
+    from tensorfold.families.glm5_next.cuda import heat
+    from tensorfold.families.glm5_next.cuda.engine import GlmEngine
+
+    (tmp_path / "zone0").write_text("50000\n")
+    odd = threading.local()
+    real = heat.Heat.from_env
+    monkeypatch.setattr(heat.Heat, "from_env", classmethod(
+        lambda cls, env=None: cls(92, 88, str(tmp_path / "zone*")) if getattr(odd, "on", False) else real(env)))
+
+    def start(r, comm):
+        odd.on = r == 1
+        GlmEngine(checkpoints["mlx"], rank=r, master="", port=0, world=3, comm=comm, graphs=False)
+
+    with pytest.raises(RuntimeError, match=r"different settings.*TF_GLM_HEAT_LOW\): rank 0 \[.*\], rank 1 \["):
         run_ranks(start, 3)
 
 
