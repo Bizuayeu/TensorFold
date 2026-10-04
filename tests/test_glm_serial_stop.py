@@ -249,7 +249,7 @@ def glm_rank(r: int, comm):
 @pytest.fixture
 def fake_prefill(monkeypatch):
     def prefill(e, prompt, sampling, *, mtp=True, drafter=None, resume=None, keep_at=None, keep=None,
-                prompt_logprobs=None):
+                prompt_logprobs=None, vision=None):
         e.st.pos = e.st.mtp_len = len(prompt)
         return 7
 
