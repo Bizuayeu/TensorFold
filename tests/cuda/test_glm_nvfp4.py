@@ -19,7 +19,7 @@ from test_glm_engine import MOE, D, _checkpoint, _forget, _generate, _state, _Tw
 from tensorfold.cuda.nvfp4 import experts as nvx  # noqa: E402
 from tensorfold.cuda.nvfp4 import format as fmt  # noqa: E402
 from tensorfold.engine.exact_sampling import Sampling  # noqa: E402
-from tensorfold.families.glm5_next.cuda import split  # noqa: E402
+from tensorfold.families.glm5_next.cuda import latent, split  # noqa: E402
 
 L = "model.language_model."
 FILE = "model-00001-of-00001.safetensors"
@@ -340,3 +340,20 @@ def test_estimate_counts_what_the_weights_hold(path, engine):
     assert engine.w.mtp is not None
     assert estimate == engine.w.nbytes()
     assert engine.capacity_plan["weight_bytes_estimate"] == estimate
+
+
+def test_weights_count_the_latent_paths_kv_b(engine):
+    """Each DSA layer's ``latent.AbsorbW`` (kv_b split per head, a second copy beside kv_k / kv_v) is in ``nbytes``."""
+
+    dsa = [L.dsa for L in engine.w.layers if L.dsa is not None] + [engine.w.mtp.layer.dsa]
+    held = [a.absorb for a in dsa]
+    assert all(isinstance(h, latent.AbsorbW) for h in held)
+    full = engine.w.nbytes()
+    try:
+        for a in dsa:
+            a.absorb = None
+        bare = engine.w.nbytes()
+    finally:
+        for a, h in zip(dsa, held):
+            a.absorb = h
+    assert full - bare == sum(h.nbytes() for h in held) > 0

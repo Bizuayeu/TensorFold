@@ -286,6 +286,24 @@ def engine_x(tmp_path_factory):
     return GlmEngine(path / "model", rank=0, master="", port=0, drafter=path / "dflash2", comm=_TwoCopies())
 
 
+@pytest.mark.parametrize("exl3", [False, True], ids=["mlx4", "exl3"])
+def test_estimate_counts_the_latent_paths_kv_b(tmp_path, exl3):
+    """A rank's startup estimate is what its weights hold, the latent path's second copy of kv_b included
+    (``latent.AbsorbQ4`` on MLX 4-bit g64 rows, ``latent.AbsorbW`` in BF16 on EXL3)."""
+
+    from tensorfold.cuda.capacity import headers
+    from tensorfold.cuda.geometry import split_weights
+    from tensorfold.families.glm5_next.cuda import latent, split
+    from tensorfold.families.glm5_next.cuda.weights import load
+
+    _checkpoint(tmp_path, exl3=exl3)
+    w = load(tmp_path, rank=0, world=2)
+    kind = latent.AbsorbW if exl3 else latent.AbsorbQ4
+    assert all(isinstance(L.dsa.absorb, kind) for L in w.layers if L.dsa is not None)
+    transform = split_weights(split.rule, w.plan)
+    assert sum(transform(name, info)[0] for name, info in headers(tmp_path).items()) == w.nbytes()
+
+
 def _forget(engine) -> None:
     """Drop every kept snapshot, so the next request prefills from scratch (the engine keeps several
     conversations, so an unrelated prompt no longer does this)."""
