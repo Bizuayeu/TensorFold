@@ -122,6 +122,15 @@ class GlmEngine:
         from .weights import Config
 
         encode_policy(policy)                           # a bad default fails here, not in the first request
+        if vision_offload:
+            import torch
+
+            from tensorfold.cuda.capacity import unified
+
+            if unified(torch):
+                raise ValueError("--vision-offload frees nothing on a GPU that shares the host's memory (GB10): host "
+                                 "RAM and GPU memory are the same pages there, so the tower would only move between "
+                                 "them; drop --vision-offload")
         cfg = Config.read(model_dir)
         # what only two ranks run, refused before any device or rank exchange
         if world != 2 and cfg.quant == "exl3":

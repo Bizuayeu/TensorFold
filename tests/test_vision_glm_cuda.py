@@ -537,3 +537,13 @@ def test_video_parts_are_refused_for_glm_with_a_clear_message():
                                              {"type": "video_url", "video_url": {"url": "data:video/mp4;base64,AAAA"}}]}]
     with pytest.raises(RequestError, match="video are unsupported"):
         prepare_images(frontend, messages, lambda template: "")
+
+
+def test_vision_offload_is_refused_where_the_gpu_shares_the_hosts_memory(tmp_path, monkeypatch):
+    pytest.importorskip("torch")
+    from tensorfold.cuda import capacity
+    from tensorfold.families.glm5_next.cuda.engine import GlmEngine
+
+    monkeypatch.setattr(capacity, "unified", lambda torch: True)      # GB10: host RAM and the GPU's are one
+    with pytest.raises(ValueError, match="--vision-offload frees nothing"):
+        GlmEngine(tmp_path, rank=0, master="", port=0, vision=True, vision_offload=True)
