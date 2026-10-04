@@ -237,7 +237,8 @@ def cuda_engine(model_dir: str | Path, *, drafter: str = "", tp: int = 1, rank: 
                      context=options.get("context"), context_explicit=options.get("context_explicit"),
                      serial_only=bool(no_drafts), world=int(tp), vision=bool(options.get("vision", False)),
                      vision_urls=bool(options.get("vision_urls", False)),
-                     vision_offload=bool(options.get("vision_offload", False)))
+                     vision_offload=bool(options.get("vision_offload", False)),
+                     vision_image_tokens=options.get("vision_image_tokens"))
 
 
 def __getattr__(name: str) -> Any:

@@ -114,7 +114,8 @@ class GlmEngine:
     def __init__(self, model_dir: Path, *, rank: int, master: str, port: int, policy: str = DEFAULT_POLICY,
                  drafter: Path | None = None, context: int | None = None, context_explicit: bool | None = None, serial_only: bool = False, comm=None,
                  prefill_rows: int | None = None, world: int = 2, graphs: bool = True, vision: bool = False,
-                 vision_urls: bool = False, vision_offload: bool = False) -> None:
+                 vision_urls: bool = False, vision_offload: bool = False,
+                 vision_image_tokens: int | None = None) -> None:
         """``comm``: a communicator with ``all_gather`` and ``barrier`` instead of NCCL between the machines (tests);
         ``graphs=False``: decode windows run eager (tests whose ranks are threads, whose exchanges wait on the host)."""
 
@@ -252,7 +253,7 @@ class GlmEngine:
                 from tensorfold.vision.glm_cuda import GLMCudaVision
 
                 self.vision = GLMCudaVision(model_dir, torch.device("cuda"), allow_urls=vision_urls,
-                                           offload=vision_offload)
+                                           offload=vision_offload, visual_tokens=vision_image_tokens)
                 torch.cuda.empty_cache()
                 print(f"[tensorfold] GLM image tower: {self.vision.weight_bytes / 2 ** 30:.2f} GiB on rank 0",
                       flush=True)

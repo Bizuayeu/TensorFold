@@ -257,6 +257,8 @@ def _serve_cuda(args: argparse.Namespace, family: Any, model_dir: Path, context:
     if getattr(args, "kv_dtype", "bf16") != "bf16":
         options["kv_dtype"] = args.kv_dtype
     options.update(_vision_options(args))
+    if getattr(args, "vision_image_tokens", None) is not None:     # an engine may size its image workspace by it
+        options["vision_image_tokens"] = int(args.vision_image_tokens)
     if args.mtp_drafts is not None:
         options["mtp_drafts"] = int(args.mtp_drafts)
     if args.ple_on_ssd:

@@ -20,6 +20,8 @@ def _checkpoint(path, layout=None):
     config = {"model_type": "glm5_next", "image_token_id": 99, "vision_config": VISION,
               "text_config": {"hidden_size": 16}}
     (path / "config.json").write_text(json.dumps(config))
+    # the image processor's settings as GLM-5.3-Flash ships them (processor_config.json, one image at most 8,000)
+    (path / "processor_config.json").write_text(json.dumps({"image_processor": {"max_image_tokens": 8000}}))
     shapes = {**tower_shapes(VISION), **(layout or {})}
     offset, entries = 0, {}
     for name, shape in shapes.items():
@@ -299,19 +301,22 @@ def _vision(calls, offload=False):
     vision = object.__new__(GLMCudaVision)
     vision.config, vision.image_token, vision.device = VISION, 99, torch.device("cpu")
     vision.offload, vision._lock, vision.tower = offload, threading.Lock(), _fake_tower(calls)
+    vision.image_tokens, vision.visual_tokens = 4096, 65536
     return vision
 
 
 def _prepared(sides):
+    """Images of square sides, or (h, w) grids, in one prompt."""
     from tensorfold.vision.glm_processing import PreparedGLMVisionPrompt
 
-    grid = np.array([[1, s, s] for s in sides], dtype=np.int64)
-    counts = [s * s // 4 for s in sides]
+    sides = [s if isinstance(s, tuple) else (s, s) for s in sides]
+    grid = np.array([[1, h, w] for h, w in sides], dtype=np.int64)
+    counts = [h * w // 4 for h, w in sides]
     prompt, spans = [1], []
     for n in counts:
         spans.append((len(prompt), len(prompt) + n))
         prompt += [99] * n + [2]
-    pixels = np.zeros((int(sum(s * s for s in sides)), 24), dtype=np.float32)
+    pixels = np.zeros((int(sum(h * w for h, w in sides)), 24), dtype=np.float32)
     return PreparedGLMVisionPrompt(tuple(prompt), pixels, grid, tuple(spans), tuple("h" * len(sides)))
 
 
@@ -377,8 +382,66 @@ def test_the_visual_token_budget_is_shared_and_capped_per_image():
     assert seen == [4096]                              # one image never gets more than the tower takes at once
     vision = object.__new__(GLMCudaVision)             # the CUDA tower's prepare sets that cap itself
     vision.frontend = SimpleNamespace(prepare=lambda *a, **kw: kw)
-    assert vision.prepare("x", [], max_visual_tokens=16384)["max_image_tokens"] == 4096
+    vision.image_tokens, vision.visual_tokens = 8000, 8000
+    assert vision.prepare("x", [], max_visual_tokens=16384)["max_image_tokens"] == 8000
     assert vision.prepare("x", [], max_image_tokens=100)["max_image_tokens"] == 100
+
+
+def test_an_image_takes_up_to_the_checkpoints_cap_and_a_request_that_much_by_default(tmp_path):
+    from tensorfold.vision.glm_cuda import GLMCudaVision, image_cap
+
+    _checkpoint(tmp_path)
+    assert image_cap(tmp_path) == 8000
+    vision = object.__new__(GLMCudaVision)
+    vision.frontend = SimpleNamespace(prepare=lambda *a, **kw: kw)
+    vision.image_tokens, vision.visual_tokens = 8000, 8000
+    assert vision.prepare("x", []) == {"max_visual_tokens": 8000, "max_image_tokens": 8000}
+    vision.visual_tokens = 4096                        # --vision-image-tokens 4096: the server passes nothing then
+    assert vision.prepare("x", []) == {"max_visual_tokens": 4096, "max_image_tokens": 8000}
+    assert vision.prepare("x", [], max_visual_tokens=16384)["max_visual_tokens"] == 16384
+    (tmp_path / "processor_config.json").unlink()
+    with pytest.raises(ValueError, match="max_image_tokens"):
+        image_cap(tmp_path)
+
+
+def test_one_image_of_the_checkpoints_8000_tokens_is_one_tower_call():
+    pytest.importorskip("torch")
+    calls = []
+    vision = _vision(calls)
+    vision.image_tokens = vision.visual_tokens = 8000
+    prepared = _prepared([(160, 200)])                # 32,000 patches: 8,000 visual tokens
+    encoded = vision.encode(prepared, prepared.token_ids)
+    assert [c[1][0] for c in calls if c[0] == "tower"] == [32000] and encoded.features.shape == (8000, 16)
+    over = _prepared([(162, 200)])                    # 8,100 visual tokens
+    with pytest.raises(ValueError, match="CUDA vision budget"):
+        vision.encode(over, over.token_ids)
+    two = _prepared([(160, 200), (2, 2)])              # past the request's 8,000
+    with pytest.raises(ValueError, match="CUDA vision budget"):
+        vision.encode(two, two.token_ids)
+
+
+def test_the_image_budget_reaches_the_glm_engine(tmp_path, monkeypatch):
+    pytest.importorskip("torch")
+    from tensorfold import cli
+    from tensorfold.cuda import precision, prompt_precision
+    from tensorfold.families import glm5_next
+    from tensorfold.families.glm5_next.cuda import engine as glm_engine
+
+    monkeypatch.setattr(precision, "set_mode", lambda *a, **k: None)
+    monkeypatch.setattr(prompt_precision, "set_fp8", lambda *a: None)
+    made = []
+    engine = SimpleNamespace(follow=lambda: None)
+    family = SimpleNamespace(title="GLM", model_type="glm5_next",
+                             package=SimpleNamespace(cuda_engine=lambda *a, **k: made.append(k) or engine,
+                                                     CUDA_TP=(2, 3)))
+    for flags, want in (([], None), (["--vision-image-tokens", "4096"], 4096)):
+        args = cli.build_parser().parse_args(["serve", str(tmp_path), "--backend", "cuda", "--no-drafts", "--tp", "3",
+                                              "--rank", "1", "--master", "10.0.0.1", "--vision"] + flags)
+        cli._serve_cuda(args, family, tmp_path, 4096)
+        assert made[-1].get("vision_image_tokens") == want
+    monkeypatch.setattr(glm_engine, "GlmEngine", lambda *a, **k: made.append(k) or SimpleNamespace(**k))
+    glm5_next.cuda_engine(tmp_path, tp=3, rank=1, master="10.0.0.1", vision=True, vision_image_tokens=4096)
+    assert made[-1]["vision_image_tokens"] == 4096
 
 
 def test_video_parts_are_refused_for_glm_with_a_clear_message():

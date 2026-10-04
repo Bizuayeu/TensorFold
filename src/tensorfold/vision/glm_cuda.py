@@ -10,8 +10,7 @@ from pathlib import Path
 
 from tensorfold.cuda.capacity import SIZES
 
-from .qwen_cuda import (MAX_PATCHES, MAX_REQUEST_PATCHES, TOKENS_PER_IMAGE, WORKSPACE_BYTES, EncodedVision,
-                        float_headers, image_runs)
+from .qwen_cuda import WORKSPACE_BYTES, EncodedVision, float_headers, image_runs
 
 # --vision-offload: the tower visits the GPU per image, so rank 0's budget keeps room for its bytes plus the
 # activations of the largest accepted image. Qwen's tower measured 1.35 GiB over its weights on a 4,096-token image;
@@ -35,6 +34,21 @@ def vision_config(model_dir: str | Path) -> dict:
     if not isinstance(raw.get("image_token_id"), int):
         raise ValueError("this GLM checkpoint is missing its image token")
     return config
+
+
+def image_cap(model_dir: str | Path) -> int:
+    """One image's visual tokens at most: the checkpoint image processor's ``max_image_tokens`` (8,000 on
+    GLM-5.3-Flash), which the tower call and its workspace are sized for."""
+
+    for name in ("processor_config.json", "preprocessor_config.json"):
+        path = Path(model_dir) / name
+        if path.exists():
+            value = json.loads(path.read_text())
+            cap = (value.get("image_processor") or {} if name == "processor_config.json" else value).get(
+                "max_image_tokens")
+            if isinstance(cap, int) and not isinstance(cap, bool) and cap > 0:
+                return cap
+    raise ValueError("this GLM checkpoint's image processor names no max_image_tokens")
 
 
 def tower_shapes(config: dict) -> dict[str, list[int]]:
@@ -215,13 +229,18 @@ def build_tower(model_dir, device):
 class GLMCudaVision:
     """Only the image tower is loaded, on rank zero; the CUDA engine keeps all language computation."""
 
-    def __init__(self, model_dir, device, allow_urls: bool = False, offload: bool = False):
+    def __init__(self, model_dir, device, allow_urls: bool = False, offload: bool = False,
+                 visual_tokens: int | None = None):
+        """``visual_tokens``: what a request's images share (--vision-image-tokens), by default one image's cap."""
+
         from .glm_processing import GLMImageProcessor
 
         self.allow_urls = allow_urls
         self.offload = offload
         self._lock = threading.Lock()   # one image on the GPU at a time when the tower is offloaded
         self.config, self.weight_bytes = checkpoint_vision(model_dir)
+        self.image_tokens = image_cap(model_dir)
+        self.visual_tokens = int(visual_tokens or self.image_tokens)
         self.frontend = GLMImageProcessor.from_directory(model_dir)
         self.image_token = self.frontend.image_token_id
         self.device = device
@@ -229,7 +248,9 @@ class GLMCudaVision:
         keep_stored_dtypes(self.tower)
 
     def prepare(self, *args, **kwargs):
-        kwargs.setdefault("max_image_tokens", TOKENS_PER_IMAGE)     # whatever budget the request's images share
+        # the server passes a budget only when it differs from its shared default (4,096): this engine's otherwise
+        kwargs.setdefault("max_visual_tokens", self.visual_tokens)
+        kwargs.setdefault("max_image_tokens", self.image_tokens)    # whatever budget the request's images share
         return self.frontend.prepare(*args, **kwargs)
 
     @contextmanager
@@ -270,9 +291,10 @@ class GLMCudaVision:
             raise ValueError("image grids must contain positive merge-aligned dimensions")
         sizes = [int(t) * int(h) * int(w) for t, h, w in grid]
         patches = sum(sizes)
-        if patches > MAX_REQUEST_PATCHES or max(sizes) > MAX_PATCHES:
-            raise ValueError(f"image request exceeds the CUDA vision budget of {MAX_PATCHES} patches an image and "
-                             f"{MAX_REQUEST_PATCHES} a request")
+        call, request = self.image_tokens * merge**2, self.visual_tokens * merge**2
+        if patches > request or max(sizes) > call:
+            raise ValueError(f"image request exceeds the CUDA vision budget of {call} patches an image and "
+                             f"{request} a request")
         width = self.config["in_channels"] * self.config["temporal_patch_size"] * self.config["patch_size"] ** 2
         if tuple(prepared.pixel_values.shape) != (patches, width):
             raise ValueError("image patch tensor has an invalid shape")
@@ -281,9 +303,9 @@ class GLMCudaVision:
             raise ValueError("vision feature rows must match every image placeholder exactly")
         with torch.inference_mode(), sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]):
             parts = []
-            # images never attend to one another: runs of whole images, at most MAX_PATCHES a tower call (one call,
-            # as before, whenever the request fits it), so the scratch stays what one full-size image needs
-            for begin, end in image_runs(sizes, MAX_PATCHES):
+            # images never attend to one another: runs of whole images, at most one full-size image's patches a tower
+            # call (one call whenever the request fits it), so the scratch stays what one full-size image needs
+            for begin, end in image_runs(sizes, call):
                 done = sum(sizes[:begin])
                 # a copy: the prepared arrays are read-only, and a tensor may not share them
                 # pixels take the patch convolution's own dtype (its weight's): the input is rounded once, if at all
