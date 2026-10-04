@@ -165,7 +165,7 @@ class GlmEngine:
         # --vision: rank 0 holds the image tower and its workspace, the others the features they receive
         geometry = capacity_geometry(lambda text: mla_geometry(text, world, MAX_ROWS, minimum_slots=DENSE_CAPACITY,
                                                                latent=LATENT, mtp=self.mtp_on, kv=self.kv),
-                                     model_dir, vision, rank, offload=vision_offload,
+                                     model_dir, vision, rank, offload=vision_offload, world=world,
                                      visual_tokens=vision_image_tokens)
         self.capacity_plan = admit(model_dir, context if explicit else cfg.dense_limit, explicit, torch, geometry,
                                    vision_weights(weights_estimate, vision, rank, vision_offload), rank=rank,
@@ -248,7 +248,7 @@ class GlmEngine:
             print("[tensorfold] drafter costs (ms): verify " + " ".join(f"{v:.1f}" for v in c["verify"]) + mtp +
                   f"; DFlash2 block {c['block']:.2f} (+{c['taps_row']:.3f} a tap row)", flush=True)
         self.vision = self.image_token = None
-        if vision:                          # rank 0 encodes; both find the image rows in the prompt
+        if vision:                          # rank 0 encodes; every rank finds the image rows in the prompt
             self.image_token = int(json.loads((Path(model_dir) / "config.json").read_text())["image_token_id"])
             if rank == 0:
                 from tensorfold.vision.glm_cuda import GLMCudaVision
@@ -398,13 +398,14 @@ class GlmEngine:
         return [int(v) for v in allv[:count].tolist()]
 
     def _images(self, encoded, prompt: list[int]):
-        """Rank 0's image features on both ranks (rank 1 passes None)."""
+        """Rank 0's image features on every rank (the others pass None)."""
 
         from tensorfold.vision.glm_cuda import share_encoded
 
         if self.image_token is None:
             raise RuntimeError("rank 0 sent an image request, and this rank was started without --vision")
-        return share_encoded(encoded, self.rank, self.comm, prompt, self.image_token, self.w.cfg.hidden, "cuda")
+        return share_encoded(encoded, self.rank, self.comm, prompt, self.image_token, self.w.cfg.hidden, "cuda",
+                             self.world)
 
     def _effective(self, code: list[int]) -> list[int]:
         """Resolve auto and MTP policies to the available heads, using EXL3_AUTO for EXL3 with DFlash2 and DFlash2 when MTP is absent."""

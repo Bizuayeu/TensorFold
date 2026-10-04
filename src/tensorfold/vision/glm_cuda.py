@@ -1,4 +1,5 @@
-"""GLM-5.3-Flash image features for the two-rank CUDA engine; its NoPE language layers take no image positions."""
+"""GLM-5.3-Flash image features for the CUDA engine of two or three ranks; its NoPE language layers take no image
+positions."""
 
 from __future__ import annotations
 
@@ -122,24 +123,29 @@ def workspace_bytes(config: dict, image_tokens: int, visual_tokens: int) -> int:
     return call * PATCH_BYTES + 2 * visual_tokens * config["out_hidden_size"] * 2
 
 
-def capacity_geometry(base, model_dir, enabled: bool, rank: int, offload: bool = False,
+def capacity_geometry(base, model_dir, enabled: bool, rank: int, offload: bool = False, world: int = 2,
                       visual_tokens: int | None = None):
-    """``visual_tokens``: what a request's images share (--vision-image-tokens), by default one image's cap."""
+    """``visual_tokens``: what a request's images share (--vision-image-tokens), by default one image's cap. Every
+    rank gathers the features a piece at a time (``share_encoded``); the others keep a copy."""
 
     def geometry(text):
         from tensorfold.cuda.capacity import Geometry
+        from tensorfold.cuda.geometry import PREFILL_ROWS
 
         result = base(text)
         if not enabled:
             return result
+        cap = image_cap(model_dir)
+        budget = visual_tokens or cap
+        width = vision_config(model_dir)["out_hidden_size"]
+        reserve = world * PREFILL_ROWS * width * 2                      # one piece's gather
         if rank == 0:
             config, tower_bytes = checkpoint_vision(model_dir)
-            cap = image_cap(model_dir)
-            reserve = workspace_bytes(config, cap, visual_tokens or cap)
+            reserve += workspace_bytes(config, cap, budget)
             if offload:
                 reserve += tower_bytes                                  # the tower's visit to the GPU
         else:
-            reserve = 128 * 1024**2                                     # rank one holds the received features
+            reserve += budget * width * 2                               # the received features
         return Geometry(lambda slots: result.bytes_at(slots) + reserve, result.reserve, result.minimum_slots)
     return geometry
 
@@ -338,21 +344,35 @@ class GLMCudaVision:
 
 
 def share_encoded(payload: EncodedVision | None, rank: int, comm, prompt, image_token: int, hidden: int,
-                  device) -> EncodedVision:
-    """Rank zero's features on both ranks; each finds the image rows in the prompt both already hold."""
+                  device, world: int = 2) -> EncodedVision:
+    """Rank zero's features on every rank of ``world``; each finds the image rows in the prompt all already hold.
+
+    The engine's all-gather carries them a prompt chunk's rows at a time (the others send zeros), so a rank receives
+    at most world x a chunk's rows at once, whatever the request's budget; rank 0 keeps its own tensor."""
 
     import torch
+    from tensorfold.cuda.geometry import PREFILL_ROWS
 
     rows = placeholder_rows(prompt, image_token)
     if not rows or (payload is not None and tuple(payload.rows) != rows):
         raise ValueError("vision feature rows must match every image placeholder exactly")
-    send = (payload.features if rank == 0 else
-            torch.zeros((len(rows), hidden), dtype=torch.bfloat16, device=device))
-    if tuple(send.shape) != (len(rows), hidden) or send.dtype != torch.bfloat16:
-        raise ValueError("vision features differ from the image placeholders or the embedding width")
-    got = torch.empty((2 * len(rows), hidden), dtype=torch.bfloat16, device=device)
-    comm.all_gather(send.contiguous().view(-1), got.view(-1))
-    return EncodedVision(rows, got[:len(rows)], None, 0)       # the same bits on both ranks
+    n = len(rows)
+    if rank == 0:
+        features = payload.features
+        if tuple(features.shape) != (n, hidden) or features.dtype != torch.bfloat16:
+            raise ValueError("vision features differ from the image placeholders or the embedding width")
+        features = features.contiguous()
+    else:
+        features = torch.empty((n, hidden), dtype=torch.bfloat16, device=device)
+    piece = min(n, PREFILL_ROWS)
+    zeros = None if rank == 0 else torch.zeros((piece, hidden), dtype=torch.bfloat16, device=device)
+    got = torch.empty((world * piece, hidden), dtype=torch.bfloat16, device=device)
+    for lo in range(0, n, piece):
+        m = min(piece, n - lo)
+        comm.all_gather((features[lo:lo + m] if rank == 0 else zeros[:m]).reshape(-1), got[:world * m].view(-1))
+        if rank != 0:
+            features[lo:lo + m] = got[:m]                       # rank 0's slot: the same bits on every rank
+    return EncodedVision(rows, features, None, 0)
 
 
 def replace_rows(x, payload: EncodedVision, start: int, end: int, copies: int = 1):

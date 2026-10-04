@@ -110,7 +110,48 @@ def test_prefill_skips_chunks_that_hold_no_image_rows():
     assert all(_images(payload, s, n) is not None for s, n in ((0, 11), (11, 1), (12, 16), (30, 4)))
 
 
-def test_a_long_prompt_writes_every_image_row_once_in_each_chunk_on_both_ranks():
+class _Ranks:
+    """``world`` ranks as threads whose all_gather puts every rank's send, in rank order, into each one's recv; it
+    records each rank's gathers (the elements received)."""
+
+    def __init__(self, world: int):
+        import threading
+
+        self.world, self.barrier, self.sends = world, threading.Barrier(world), [None] * world
+        self.received: list[list[int]] = [[] for _ in range(world)]
+
+    def comm(self, rank: int):
+        def all_gather(send, recv):
+            self.sends[rank] = send.clone()
+            self.barrier.wait()
+            recv.copy_(__import__("torch").cat(self.sends))
+            self.received[rank].append(recv.numel())
+            self.barrier.wait()
+        return SimpleNamespace(all_gather=all_gather)
+
+    def run(self, fn) -> list:
+        import threading
+
+        out, errors = [None] * self.world, []
+
+        def body(r):
+            try:
+                out[r] = fn(r, self.comm(r))
+            except BaseException as exc:      # noqa: BLE001  (raised below)
+                errors.append(exc)
+                self.barrier.abort()
+        threads = [threading.Thread(target=body, args=(r,)) for r in range(self.world)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        if errors:
+            raise errors[0]
+        return out
+
+
+@pytest.mark.parametrize("world", [2, 3])
+def test_a_long_prompt_writes_every_image_row_once_in_each_chunk_on_every_rank(world):
     torch = pytest.importorskip("torch")
     from tensorfold.families.glm5_next.cuda.decode import PREFILL_ROWS, _images
     from tensorfold.vision.glm_cuda import share_encoded
@@ -120,15 +161,8 @@ def test_a_long_prompt_writes_every_image_row_once_in_each_chunk_on_both_ranks()
     n, image, rows = 12_164, 7, tuple(range(1_900, 1_900 + 4_096))
     prompt = [image if i in rows else 1 + i % 5 for i in range(n)]
     features = (torch.arange(len(rows), dtype=torch.float32)[:, None] + 1).expand(-1, 2).to(torch.bfloat16)
-    sent = []
-
-    def all_gather(send, recv):
-        sent.append(send.clone()) if not sent else None
-        recv[:send.numel()], recv[send.numel():] = sent[0], send
-
-    comm = SimpleNamespace(all_gather=all_gather)
-    ranks = [share_encoded(EncodedVision(rows, features, None, 0), 0, comm, prompt, image, 2, "cpu"),
-             share_encoded(None, 1, comm, prompt, image, 2, "cpu")]
+    ranks = _Ranks(world).run(lambda r, comm: share_encoded(EncodedVision(rows, features, None, 0) if r == 0 else None,
+                                                            r, comm, prompt, image, 2, "cpu", world))
     for payload in ranks:
         for shift in (0, 1):                           # the main model's rows, the MTP head's next-token rows
             x = torch.zeros((n, 2), dtype=torch.bfloat16)
@@ -142,31 +176,62 @@ def test_a_long_prompt_writes_every_image_row_once_in_each_chunk_on_both_ranks()
             assert torch.equal(x, want), shift
 
 
-def test_both_ranks_receive_the_same_features_and_find_the_rows_themselves():
+@pytest.mark.parametrize("world", [2, 3])
+def test_every_rank_receives_the_same_features_and_finds_the_rows_itself(world):
+    torch = pytest.importorskip("torch")
+    from tensorfold.cuda.geometry import PREFILL_ROWS
+    from tensorfold.vision.glm_cuda import share_encoded
+    from tensorfold.vision.qwen_cuda import EncodedVision
+
+    n, width = 2 * PREFILL_ROWS + 5, 4                 # three pieces of at most a prompt chunk's rows
+    prompt = [1] + [99] * n + [2]
+    features = torch.randn(n, width).to(torch.bfloat16)
+    ranks = _Ranks(world)
+    got = ranks.run(lambda r, comm: share_encoded(EncodedVision(tuple(range(1, n + 1)), features, None, 0)
+                                                  if r == 0 else None, r, comm, prompt, 99, width, "cpu", world))
+    assert all(g.rows == tuple(range(1, n + 1)) and torch.equal(g.features, features) for g in got)
+    # every rank gathers as often, never more than world x a prompt chunk's rows at once
+    pieces = [world * PREFILL_ROWS * width] * 2 + [world * 5 * width]
+    assert ranks.received == [pieces] * world
+
+
+def test_rows_that_are_not_the_placeholders_never_reach_another_rank():
     torch = pytest.importorskip("torch")
     from tensorfold.vision.glm_cuda import share_encoded
     from tensorfold.vision.qwen_cuda import EncodedVision
 
-    sent = []
-
     def all_gather(send, recv):
-        sent.append(send.clone()) if rank[0] == 0 else None
-        recv[:send.numel()] = sent[-1]
-        recv[send.numel():] = send
+        raise AssertionError("gathered")
 
-    rank = [0]
     comm = SimpleNamespace(all_gather=all_gather)
     prompt = [1, 99, 99, 2, 99]
     features = torch.randn(3, 4).to(torch.bfloat16)
-    got0 = share_encoded(EncodedVision((1, 2, 4), features, None, 0), 0, comm, prompt, 99, 4, "cpu")
-    rank[0] = 1
-    got1 = share_encoded(None, 1, comm, prompt, 99, 4, "cpu")
-    assert got0.rows == got1.rows == (1, 2, 4)
-    assert torch.equal(got0.features, features) and torch.equal(got1.features, features)
-    with pytest.raises(ValueError):                    # rows that are not the placeholders never reach the other rank
-        share_encoded(EncodedVision((1, 2), features[:2], None, 0), 0, comm, prompt, 99, 4, "cpu")
     with pytest.raises(ValueError):
-        share_encoded(None, 1, comm, [1, 2, 3], 99, 4, "cpu")
+        share_encoded(EncodedVision((1, 2), features[:2], None, 0), 0, comm, prompt, 99, 4, "cpu", 3)
+    with pytest.raises(ValueError):
+        share_encoded(EncodedVision((1, 2, 4), features[:, :2], None, 0), 0, comm, prompt, 99, 4, "cpu", 3)
+    with pytest.raises(ValueError):
+        share_encoded(None, 1, comm, [1, 2, 3], 99, 4, "cpu", 3)
+
+
+def test_every_rank_reserves_what_it_receives(tmp_path):
+    from tensorfold.cuda.capacity import Geometry
+    from tensorfold.cuda.geometry import PREFILL_ROWS
+    from tensorfold.vision.glm_cuda import workspace_bytes
+
+    _checkpoint(tmp_path)
+    base = lambda text: Geometry(lambda slots: slots * 64, 8)
+    plain = capacity_geometry(base, tmp_path, False, 0)({}).needed(32)
+    width = VISION["out_hidden_size"]
+    for world in (2, 3):
+        scratch = world * PREFILL_ROWS * width * 2     # one piece's gather
+        for budget in (None, 2048):
+            features = (budget or 8000) * width * 2   # a follower's copy of the request's features
+            zero = capacity_geometry(base, tmp_path, True, 0, world=world, visual_tokens=budget)({}).needed(32)
+            assert zero - plain == workspace_bytes(VISION, 8000, budget or 8000) + scratch
+            for rank in range(1, world):
+                got = capacity_geometry(base, tmp_path, True, rank, world=world, visual_tokens=budget)({}).needed(32)
+                assert got - plain == features + scratch, (world, budget, rank)
 
 
 def test_a_continued_image_prompt_adds_text_only():
@@ -279,12 +344,15 @@ def test_offloaded_towers_count_a_visit_not_residence(tmp_path):
     resident = capacity_geometry(base, tmp_path, True, 0)({}).needed(32)
     offloaded = capacity_geometry(base, tmp_path, True, 0, offload=True)({}).needed(32)
     plain = capacity_geometry(base, tmp_path, False, 0)({}).needed(32)
-    work = workspace_bytes(VISION, 8000, 8000)        # the checkpoint's cap, and a request of that much
+    from tensorfold.cuda.geometry import PREFILL_ROWS
+
+    # the checkpoint's cap, a request of that much, and one piece's gather on two ranks
+    work = workspace_bytes(VISION, 8000, 8000) + 2 * PREFILL_ROWS * VISION["out_hidden_size"] * 2
     # offloaded, the tower leaves the weights' count (below) for the visit's: the same workspace beside it
     assert offloaded - plain == tower + work and offloaded == resident + tower
     assert resident - plain == work
     budget = capacity_geometry(base, tmp_path, True, 0, visual_tokens=2048)({}).needed(32)
-    assert budget - plain == workspace_bytes(VISION, 8000, 2048)
+    assert budget - plain == work - workspace_bytes(VISION, 8000, 8000) + workspace_bytes(VISION, 8000, 2048)
     assert capacity_geometry(base, tmp_path, True, 1, offload=True)({}).needed(32) == \
         capacity_geometry(base, tmp_path, True, 1)({}).needed(32)
     info = {"shape": [8, 8], "dtype": "BF16"}
