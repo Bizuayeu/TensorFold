@@ -11,7 +11,7 @@ from pathlib import Path
 
 from tensorfold.cuda.capacity import SIZES
 
-from .qwen_cuda import EncodedVision, float_headers, image_runs
+from .qwen_cuda import EncodedVision, float_headers
 
 # GLM-5.3-Flash's BF16 tower on GB10, one image a call through SDPA's flash or efficient kernels: 40.8-41.0 KiB a
 # patch over its weights at 8,192, 16,384 and 32,000 patches, and 32 MiB more on a process's first call
@@ -323,9 +323,10 @@ class GLMCudaVision:
             raise ValueError("vision feature rows must match every image placeholder exactly")
         with torch.inference_mode(), sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]):
             parts = []
-            # images never attend to one another: runs of whole images, at most one full-size image's patches a tower
-            # call (one call whenever the request fits it), so the scratch stays what one full-size image needs
-            for begin, end in image_runs(sizes, call):
+            # one tower call an image: batched with others, an image's features changed in their last bits (GB10,
+            # the real tower), so an image's rows would depend on the rest of its request
+            for begin in range(len(sizes)):
+                end = begin + 1
                 done = sum(sizes[:begin])
                 # a copy: the prepared arrays are read-only, and a tensor may not share them
                 # pixels take the patch convolution's own dtype (its weight's): the input is rounded once, if at all
