@@ -405,7 +405,8 @@ def _prepared(sides):
     return PreparedGLMVisionPrompt(tuple(prompt), pixels, grid, tuple(spans), tuple("h" * len(sides)))
 
 
-def test_images_that_share_a_larger_budget_are_encoded_in_runs_of_whole_images():
+def test_each_image_is_its_own_tower_call():
+    """An image's features do not depend on the other images of its request, so each is encoded alone."""
     pytest.importorskip("torch")
     calls = []
     prepared = _prepared([128, 128, 64])              # 16,384 + 16,384 + 4,096 patches: 3 images, 9,216 rows
@@ -413,10 +414,10 @@ def test_images_that_share_a_larger_budget_are_encoded_in_runs_of_whole_images()
     towers = [c for c in calls if c[0] == "tower"]
     assert [c[1][0] for c in towers] == [16384, 16384, 4096] and encoded.features.shape == (9216, 16)
     assert encoded.rows == tuple(i for a, b in prepared.image_spans for i in range(a, b))
-    small = _prepared([32, 32])                       # a request inside one tower call is still one call
+    small = _prepared([32, 32])                       # two small images that one call could hold: still two calls
     calls.clear()
     _vision(calls).encode(small, small.token_ids)
-    assert [c[1][0] for c in calls if c[0] == "tower"] == [2048]
+    assert [(c[1][0], c[2]) for c in calls if c[0] == "tower"] == [(1024, [[1, 32, 32]]), (1024, [[1, 32, 32]])]
     huge = _prepared([130])                           # one image over the tower call's patches is refused
     with pytest.raises(ValueError, match="CUDA vision budget"):
         _vision([]).encode(huge, huge.token_ids)
