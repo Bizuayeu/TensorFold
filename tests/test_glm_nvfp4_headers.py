@@ -16,7 +16,6 @@ from tensorfold.cuda import geometry
 from tensorfold.families.glm5_next.cuda.split import ShardPlan, rule
 
 HERE = Path(__file__).parent / "fixtures" / "glm53_flash_nvfp4"
-GIB = 2 ** 30
 EXPERT = re.compile(r"layers\.(\d+)\.mlp\.experts\.\d+\.(gate|up|down)_proj\.")
 DENSE = re.compile(r"layers\.(\d+)\.mlp\.(gate|up|down)_proj\.")
 
@@ -97,7 +96,7 @@ def _component(name: str, layers: int) -> str:
 
 
 @pytest.mark.torch                       # the rank's plan reads the engine's Config (weights.py imports torch)
-def test_rank_bytes(headers, text, capsys):
+def test_rank_bytes(headers, text):
     """split_weights on the real headers, each rank: the routed experts as stored (blocks hold the codes and their
     e4m3 scales byte for byte), the MTP layer's BF16 experts at the NVFP4 size they are packed to, nothing for input
     scales or the visual tower."""
@@ -122,12 +121,6 @@ def test_rank_bytes(headers, text, capsys):
     assert parts["visual"] == 0
     vocab = int(text["vocab_size"])
     assert parts["lm_head BF16 + 4-bit draft copy"] == vocab // 2 * hidden * 2 + vocab // 2 * hidden * 9 // 16
-    total = sum(parts.values())
-    with capsys.disabled():
-        print("\nGLM-5.3-Flash NVFP4, one rank of two (startup estimate, GiB):")
-        for key, size in sorted(parts.items(), key=lambda kv: -kv[1]):
-            print(f"  {key:<36} {size / GIB:8.2f}")
-        print(f"  {'total':<36} {total / GIB:8.2f}")
 
 
 def test_the_family_reads_modelopt_nvfp4_on_cuda(tmp_path, monkeypatch):
