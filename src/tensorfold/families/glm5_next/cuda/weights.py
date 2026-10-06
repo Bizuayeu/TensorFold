@@ -173,8 +173,8 @@ class DSAW:
     q_norm: torch.Tensor
     kv_norm: torch.Tensor
     q_b: Q4
-    kv_k: Q4 | B16 | None     # key rows of kv_b for the local heads (TF_GLM_LATENT=0 only)
-    kv_v: Q4 | B16 | None     # value rows (TF_GLM_LATENT=0 only)
+    kv_k: Q4 | B16 | Fp4Linear | None     # key rows of kv_b for the local heads (TF_GLM_LATENT=0 only)
+    kv_v: Q4 | B16 | Fp4Linear | None     # value rows (TF_GLM_LATENT=0 only)
     o: Q4
     heads: int
     index: IndexW | None = None
@@ -367,18 +367,28 @@ def load(model_dir: str | Path, *, rank: int, world: int = 2, device: str = "cud
         proj = stack([p + "q_a_proj", p + "kv_a_proj_with_mqa"])
         rows = torch.arange(HL * 512, device=dev).view(HL, 512)
         krows, vrows = rows[:, :cfg.qk_dim].reshape(-1), rows[:, cfg.qk_dim:].reshape(-1)
-        if bf16:
+        fp4_kv = packed(p + "kv_b_proj")
+        if fp4_kv:
+            w, s = t(p + "kv_b_proj.weight"), t(p + "kv_b_proj.weight_scale")
+            g = float(rd.get(PREFIX + p + "kv_b_proj.weight_scale_2"))
+        elif bf16:
             w = t(p + "kv_b_proj.weight")
         else:
             w, s, b = trip(p + "kv_b_proj")
         kv_k = kv_v = None                    # the latent path reads only its own copy (absorb)
         if not latent.ENABLED:
             absorb = None
-            if bf16:
+            if fp4_kv:
+                kv_k = Fp4Linear.from_checkpoint(w[krows], s[krows], g)
+                kv_v = Fp4Linear.from_checkpoint(w[vrows], s[vrows], g)
+            elif bf16:
                 kv_k, kv_v = make_b16(w[krows]), make_b16(w[vrows])
             else:
                 kv_k = make_q4(w[krows], s[krows], b[krows])
                 kv_v = make_q4(w[vrows], s[vrows], b[vrows])
+        elif fp4_kv:                      # dequantized in fp32 (exact but for the weight scale's one rounding)
+            absorb = latent.AbsorbW.from_rows(latent.dequant_nvfp4(w[krows], s[krows], g),
+                                              latent.dequant_nvfp4(w[vrows], s[vrows], g), HL)
         elif bf16:
             absorb = latent.AbsorbW.from_rows(w[krows].float(), w[vrows].float(), HL)
         elif cfg.group_size == 64:        # the checkpoint's own 4-bit rows, read as they are stored

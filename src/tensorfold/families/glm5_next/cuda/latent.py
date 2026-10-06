@@ -35,6 +35,21 @@ def dequant_mlx4(w: torch.Tensor, s: torch.Tensor, b: torch.Tensor, group: int =
     return q * s + b
 
 
+E2M1 = (0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0)        # an NVFP4 code's magnitude (bit 3: the sign)
+
+
+def dequant_nvfp4(w: torch.Tensor, s: torch.Tensor, scale: float) -> torch.Tensor:
+    """NVFP4 rows -> fp32 [out, in]: w uint8 [out, in / 2], low nibble first; s e4m3 [out, in / 16]; ``scale`` the
+    fp32 weight scale. A code times its e4m3 scale is exact in fp32, the weight scale one rounding after it
+    (``nvfp4.format.dequant``'s order)."""
+
+    mags = torch.tensor(E2M1 + tuple(-v for v in E2M1), dtype=torch.float32, device=w.device)
+    w = w.view(torch.uint8)
+    codes = torch.stack((w & 0xF, w >> 4), dim=-1).reshape(w.shape[0], -1).long()
+    s = s.view(torch.float8_e4m3fn).float().repeat_interleave(16, dim=1)
+    return mags[codes] * s * torch.tensor(scale, dtype=torch.float32, device=w.device)
+
+
 class AbsorbW:
     """One DSA layer's kv_b_proj split per head for the latent path: wk [H, 256, 512], wv [H, 256, 512] bf16."""
 
