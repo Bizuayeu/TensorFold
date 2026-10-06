@@ -84,6 +84,21 @@ def test_glm_reads_mias_exl3_checkpoint_as_an_experiment(tmp_path, capsys):
             glm5_next.check(tmp_path)
 
 
+def test_glm_on_cuda_reads_mlx_4_bit_mias_exl3_and_modelopt_nvfp4(tmp_path, monkeypatch):
+    """The formats GLM's CUDA engine reads; Mia's EXL3 variants are the test above's, ModelOpt NVFP4 against FP8 the
+    pinned checkpoint's (test_glm_nvfp4_headers)."""
+    from tensorfold.families import glm5_next
+
+    assert glm5_next.QUANT_METHODS == {"mlx": ("mlx",), "cuda": ("mlx", "exl3", "modelopt")}
+    monkeypatch.setattr("sys.platform", "linux")
+    (tmp_path / "config.json").write_text(json.dumps(MLX4))
+    glm5_next.check(tmp_path)
+    (tmp_path / "config.json").write_text(json.dumps({"model_type": "glm5_next",
+                                                      "quantization": {"bits": 8, "group_size": 64}}))
+    with pytest.raises(ValueError, match="recipe book"):
+        glm5_next.check(tmp_path)
+
+
 def test_unknown_model_types_point_to_the_recipe_book(tmp_path):
     (tmp_path / "config.json").write_text(json.dumps({"model_type": "brand_new_arch"}))
     with pytest.raises(ValueError) as refused:
