@@ -180,10 +180,11 @@ def split_weights(rule, plan, *, latent: bool = True):
 
 def _absorbed(name: str, info: dict, shape: list[int], cfg) -> int:
     """The latent path's copy of a rank's kv_b rows: BF16 for BF16 checkpoints (``AbsorbW``), MLX 4-bit rows of
-    group 64 as stored and unpadded (``AbsorbQ4``), other groups dequantized to BF16 (``AbsorbW``)."""
+    group 64 as stored and unpadded (``AbsorbQ4``), other groups dequantized to BF16 (``AbsorbW``); NVFP4 rows (codes
+    [N, K/2], their scales nothing more) dequantized to BF16 [N, K]."""
 
     if cfg.quant in ("exl3", "nvfp4"):
-        return math.prod(shape) * 2 if name.endswith(".weight") else 0
+        return math.prod(shape) * (4 if info["dtype"] == "U8" else 2) if name.endswith(".weight") else 0
     if cfg.group_size == 64:
         return math.prod(shape) * itemsize(info, name)
     return shape[0] * shape[1] * (32 // cfg.bits) * 2 if name.endswith(".weight") else 0
