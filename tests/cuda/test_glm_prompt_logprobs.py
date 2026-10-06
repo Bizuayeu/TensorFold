@@ -15,10 +15,10 @@ import torch
 if not torch.cuda.is_available():
     pytest.skip("CUDA only", allow_module_level=True)
 
+from test_glm_engine import _checkpoint, _forget, _generate, _state, _TwoCopies  # noqa: E402
+
 from tensorfold.engine.exact_sampling import Sampling  # noqa: E402
 from tensorfold.engine.probabilities import PromptProbabilities  # noqa: E402
-
-from test_glm_engine import _TwoCopies, _checkpoint, _forget, _generate, _state  # noqa: E402
 
 PROMPT = [int(t) for t in np.random.default_rng(7).integers(0, 1000, size=99)]
 TOP = 5
@@ -130,17 +130,16 @@ def test_rows_never_resume_a_kept_prefix(engine):
 
 
 def test_rows_read_as_vllm_completions_prompt_logprobs(engine):
-    agreement = pytest.importorskip("glm53_setup.agreement")
+    """A client reads the teacher-forced NLL off vLLM's shape: None first, then each position's own token."""
     from tensorfold.server.probabilities import prompt_entries
 
     rows, _, _ = _rows(engine)
     entries = prompt_entries(rows, str)
-    parsed = agreement.parse_prompt_logprobs(entries, PROMPT)
-    forced = agreement.teacher_forced(parsed, PROMPT)
-    assert forced["positions"] == len(PROMPT) - 1
-    assert forced["mean_nll"] == pytest.approx(-sum(row["logprob"] for row in rows) / len(rows))
+    assert len(entries) == len(PROMPT) and entries[0] is None
     fields = {"logprob", "rank", "decoded_token"}
     assert all(set(detail) == fields for entry in entries[1:] for detail in entry.values())
+    nll = -sum(entry[str(token)]["logprob"] for token, entry in zip(PROMPT[1:], entries[1:])) / len(rows)
+    assert nll == pytest.approx(-sum(row["logprob"] for row in rows) / len(rows))
 
 
 def test_a_one_token_prompt_has_no_rows(engine):
