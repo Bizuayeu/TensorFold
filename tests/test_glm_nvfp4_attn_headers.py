@@ -127,10 +127,10 @@ def test_rank_bytes(headers, pinned, capsys):
     scale a number; kv_b as the latent path's BF16 copy either way (dequantized at load); the head without its 4-bit
     draft copy (the NVFP4 head drafts itself)."""
 
-    axl, pin = _rank_bytes(HERE, 2, 0, headers), _rank_bytes(PINNED, 2, 0, pinned)
+    repacked, pin = _rank_bytes(HERE, 2, 0, headers), _rank_bytes(PINNED, 2, 0, pinned)
     changed = {n for n in pinned if headers[n] != pinned[n]}
     stored = {n[:-len(".weight")] + s for n in changed for s in (".weight", ".weight_scale", ".weight_scale_2")}
-    assert all(axl[n] == pin[n] for n in pinned if n not in stored)
+    assert all(repacked[n] == pin[n] for n in pinned if n not in stored)
 
     def packed(name: str) -> int:
         n, k = pinned[name][1]
@@ -146,13 +146,13 @@ def test_rank_bytes(headers, pinned, capsys):
 
     for name in changed:
         base = name[:-len(".weight")]
-        assert axl[name] + axl[base + ".weight_scale"] == packed(name), name
-        assert axl[base + ".weight_scale_2"] == 0
+        assert repacked[name] + repacked[base + ".weight_scale"] == packed(name), name
+        assert repacked[base + ".weight_scale_2"] == 0
     kv_b = [n for n in changed if ".kv_b_proj." in n]
-    assert all(axl[n] + axl[n[:-len(".weight")] + ".weight_scale"] == pin[n] for n in kv_b)
-    saved = sum(pin.values()) - sum(axl.values())
+    assert all(repacked[n] + repacked[n[:-len(".weight")] + ".weight_scale"] == pin[n] for n in kv_b)
+    saved = sum(pin.values()) - sum(repacked.values())
     with capsys.disabled():
-        print(f"\nre-packed attention and head, rank 0 of two: {sum(axl.values()) / GIB:.2f} GiB, "
+        print(f"\nre-packed attention and head, rank 0 of two: {sum(repacked.values()) / GIB:.2f} GiB, "
               f"{saved / GIB:.2f} GiB under the pinned checkpoint's {sum(pin.values()) / GIB:.2f}")
 
 
