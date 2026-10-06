@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 import torch
@@ -271,6 +272,25 @@ B16_ROWS_SHAPES: dict[str, tuple[int, int, int, int, int]] = {
     "4096x1024": (64, 64, 4, 3, 1),          # the shared expert's down
     "8192x1536": (128, 64, 4, 3, 8),         # DSA's q_b
 }
+# TF_GLM_B16_DECODE_TABLE=0: every decode window on (B16_BN, *B16_CONFIG[16]), not B16_DECODE_SHAPES (the same bits)
+B16_DECODE_TABLE = os.environ.get("TF_GLM_B16_DECODE_TABLE", "1").strip() != "0"
+# BLOCK_N, warps, stages of a decode window's _bmm (the 16-row bucket, 1..8 rows): speed only, the K slices stay the
+# shape's; each the fastest on GB10 beyond the sweep's noise at 1, 4 and 8 rows, every tile checked for today's bits
+# (tools/bench_glm_b16_decode.py); the rest stay on today's tile
+B16_DECODE_SHAPES: dict[str, tuple[int, int, int]] = {
+    "12576x4096": (32, 4, 4),        # KDA in-projections (TP=2)
+    "160x4096": (32, 4, 4),          # the indexer's wk / weights_proj
+    "4096x128": (32, 4, 2),          # KDA f_b / g_b (TP=2)
+    "2816x128": (32, 4, 4),          # KDA f_b / g_b (TP=3)
+    "2688x128": (32, 4, 4),
+    "4096x4096": (32, 4, 2),         # KDA o_proj (TP=2)
+    "4096x2816": (32, 8, 2),         # KDA o_proj (TP=3, rank 0)
+    "4096x5632": (32, 8, 2),         # DSA o_proj (TP=3, rank 0)
+    "8192x1536": (32, 4, 3),         # DSA q_b (TP=2)
+    "5376x1536": (32, 8, 3),         # DSA q_b (TP=3, ranks 1 and 2)
+    "4096x1024": (32, 4, 4),         # the shared expert's down (TP=2)
+    "1280x4096": (32, 4, 4),         # the shared expert's gate/up (TP=3, rank 2)
+}
 
 
 def matmul(x: torch.Tensor, q: Q4 | B16, xs: torch.Tensor | None = None, *, out: torch.Tensor | None = None,
@@ -300,6 +320,10 @@ def b16_split_k(n: int, k: int) -> int:
 def b16_tile(n: int, k: int, bm: int) -> tuple[int, int, int]:
     """(BLOCK_N, warps, stages) of an n x k BF16 matmul's ``_bmm`` launch at a bm-row bucket: speed only."""
 
+    if bm == 16 and B16_DECODE_TABLE:
+        tile = B16_DECODE_SHAPES.get(f"{n}x{k}")
+        if tile is not None:
+            return tile
     return (B16_BN, *B16_CONFIG[bm])
 
 

@@ -35,10 +35,12 @@ def _inputs(n: int, k: int):
     return x.to(torch.bfloat16).cuda(), qmm.make_b16(w.cuda())
 
 
-def _decode(x, q, f32: bool, tile=None) -> list[torch.Tensor]:
-    """Each decode row count's output, with ``tile`` (BLOCK_N, warps, stages) for the 16-row bucket if given."""
+def _decode(x, q, f32: bool, tile=None, table: bool = False) -> list[torch.Tensor]:
+    """Each decode row count's output: today's tile, ``tile`` (BLOCK_N, warps, stages) for the 16-row bucket, or with
+    ``table`` B16_DECODE_SHAPES' (TF_GLM_B16_DECODE_TABLE)."""
 
     with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(qmm, "B16_DECODE_TABLE", table)
         if tile is not None:
             mp.setattr(qmm, "B16_BN", tile[0])
             mp.setattr(qmm, "B16_CONFIG", {**qmm.B16_CONFIG, 16: tile[1:]})
@@ -63,3 +65,16 @@ def test_decode_tiles_keep_the_bits(n, k):
             got = _decode(x, q, f32, tile)
             for m, a, b in zip(DECODE_ROWS, want, got):
                 assert torch.equal(a, b), (n, k, qmm.b16_split_k(n, k), tile, m, f32)
+        for m, a, b in zip(DECODE_ROWS, want, _decode(x, q, f32, table=True)):
+            assert torch.equal(a, b), (n, k, qmm.B16_DECODE_SHAPES.get(f"{n}x{k}"), m, f32)
+
+
+def test_decode_table_covers_decode_shapes_only():
+    """Every entry is a decode shape at the 16-row bucket; with the switch off every shape takes today's tile."""
+
+    assert {tuple(int(v) for v in s.split("x")) for s in qmm.B16_DECODE_SHAPES} <= set(SHAPES)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(qmm, "B16_DECODE_TABLE", False)
+        assert {qmm.b16_tile(n, k, 16) for n, k in SHAPES} == {(64, 4, 3)}
+    for n, k in SHAPES:
+        assert qmm.b16_tile(n, k, 32) == (qmm.B16_BN, *qmm.B16_CONFIG[32])

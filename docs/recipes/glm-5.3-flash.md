@@ -104,6 +104,10 @@ of 10 KiB a rank for every token of the window). A kept prompt DFlash2 can resum
 whole-window buffer instead (give both ranks the same value). The memory estimate counts the draft model as it is
 held (4-bit copies and its selector's codebooks, 0.63 GiB a rank), not at 4 bytes a checkpoint value.
 
+A decode window's BF16 projections (1 to 8 rows) launch with a tile chosen per weight shape on GB10
+(`qmm.B16_DECODE_SHAPES`, swept by `tools/bench_glm_b16_decode.py`); the K slices and the order of the sums stay the
+shape's, so the bits are the same. `TF_GLM_B16_DECODE_TABLE=0` launches every shape with the default tile.
+
 ### Long contexts: the latent cache
 
 The DSA layers are NoPE MLA: head h's key is `Wk_h c` and its value `Wv_h c`, with `c` the token's 512-wide
