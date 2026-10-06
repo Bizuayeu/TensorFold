@@ -535,6 +535,26 @@ def test_a_rank_running_kda_windows_otherwise_is_named(checkpoints, monkeypatch)
         run_ranks(start, 3)
 
 
+def test_a_rank_copying_otherwise_is_named(checkpoints, monkeypatch):
+    """TF_GLM_COPY_DRAFTS=0 on rank 1 only is refused at startup: every rank must verify the same windows."""
+
+    import threading
+
+    from tensorfold.families.glm5_next.cuda import copy_drafts
+    from tensorfold.families.glm5_next.cuda.engine import GlmEngine
+
+    odd = threading.local()
+    real = copy_drafts.enabled
+    monkeypatch.setattr(copy_drafts, "enabled", lambda env=None: False if getattr(odd, "on", False) else real(env))
+
+    def start(r, comm):
+        odd.on = r == 1
+        GlmEngine(checkpoints["mlx"], rank=r, master="", port=0, world=3, comm=comm, graphs=False)
+
+    with pytest.raises(RuntimeError, match=r"different settings.*TF_GLM_COPY_DRAFTS.*rank 0 \[.*\], rank 1 \["):
+        run_ranks(start, 3)
+
+
 def test_a_rank_waiting_on_other_heat_bands_is_named(checkpoints, monkeypatch, tmp_path):
     """TF_GLM_HEAT_HIGH/LOW on rank 1 only is refused at startup: every rank must gather the same readings."""
 

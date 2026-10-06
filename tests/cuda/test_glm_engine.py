@@ -437,6 +437,97 @@ def test_a_stop_ends_the_run_after_the_next_round(engine, sampling, policy):
     assert again == full
 
 
+# -- copy drafts: the tiny model's replies never repeat (no 8 of their tokens recur in 200, any prompt tried), so the
+# copies search a context made from the serial reply, the decode loops' own verify windows and MTP head on the GPU
+Q = [1001, 1002, 1003, 1004, 1005, 1006, 1007]       # ids past the prompts' (0..999) and the end token (1000)
+
+
+def _copy_decode(engine, prompt, sampling, kind, *, wrong=False, stop_at=None, tokens=80):
+    """(serial reply, copy-drafted result, eager steps in it): the copies' context is Q, the first token and the rest
+    of the serial reply (every 20th token off with ``wrong``), then Q and the first token again."""
+
+    from tensorfold.families.glm5_next.cuda.copy_drafts import CopyDrafts
+    from tensorfold.families.glm5_next.cuda.decode import DepthPolicy, mtp_decode, prefill, serial_decode
+    from tensorfold.families.glm5_next.cuda.drafter_choice import auto_decode
+    from tensorfold.families.glm5_next.cuda.stop import StopVote
+
+    _forget(engine)                                   # the loops below write the caches outside ``generate``
+    e = engine.e
+    try:
+        first = prefill(e, prompt, sampling)
+        serial = serial_decode(e, first, tokens, sampling).tokens
+        rest = [(t + 1) % 1000 if wrong and i % 20 == 10 else t for i, t in enumerate(serial[1:])]
+        context = Q + [first] + rest + Q + [first]
+        copies = CopyDrafts(context, len(context) - 1)
+        assert prefill(e, prompt, sampling) == first
+        heard: list[list[int]] = []
+        e.vote = StopVote(lambda new: heard.append(list(new)) or (stop_at is not None and len(heard) >= stop_at))
+        eager = e.replays["eager"]
+        if kind == "mtp":
+            res = mtp_decode(e, first, tokens, sampling, policy=DepthPolicy(3, fixed=True), on_tokens=e.vote,
+                             copies=copies)
+        else:
+            res = auto_decode(e, None, first, tokens, sampling, choice=None, m_policy=DepthPolicy(3, fixed=True),
+                              f_policy=DepthPolicy(5, fixed=True), on_tokens=e.vote, copies=copies)
+        return serial, res, e.replays["eager"] - eager
+    finally:
+        e.vote = None
+        _forget(engine)
+
+
+@pytest.mark.parametrize("wrong", [False, True], ids=["right", "wrong"])
+@pytest.mark.parametrize("kind", ["mtp", "auto"])
+@pytest.mark.parametrize("sampling", [Sampling(1234, 1.0, 20, 0.95), Sampling(1234, 1.0, 0, 0.9, 0.02), None],
+                         ids=["sampled", "nucleus", "greedy"])
+def test_copy_drafts_equal_serial(engine, sampling, kind, wrong):
+    """Copied rounds verify 6-row windows (5 drafts) as CUDA graphs and keep the serial sample, right or wrong."""
+
+    prompt = list(np.random.default_rng(5).integers(0, 1000, size=37))
+    serial, res, eager = _copy_decode(engine, prompt, sampling, kind, wrong=wrong)
+    assert res.tokens == serial
+    assert res.copy_rounds > 1 and 5 in res.depths and eager == 0, (res.depths, eager)
+    if wrong:
+        assert 0 <= res.copy_accepted < res.copy_drafted
+    else:
+        assert res.copy_accepted == res.copy_drafted > 0
+    assert len(serial) - 1 <= res.rounds + res.accepted
+
+
+@pytest.mark.parametrize("kind", ["mtp", "auto"])
+@pytest.mark.parametrize("sampling", [Sampling(1234, 1.0, 20, 0.95), None], ids=["sampled", "greedy"])
+def test_a_stop_during_copied_rounds_ends_the_run_after_the_next_round(engine, sampling, kind):
+    prompt = list(np.random.default_rng(11).integers(0, 1000, size=41))
+    serial, res, _ = _copy_decode(engine, prompt, sampling, kind, stop_at=3)
+    assert res.rounds == res.copy_rounds == 4          # the third call's stop rides on round 4's sample
+    assert res.tokens == serial[:len(res.tokens)] and len(res.tokens) == 1 + 4 * 6
+
+
+def test_the_engine_reads_the_switch_once_and_reports_copied_rounds(engine, monkeypatch):
+    """``generate`` hands the decode loop its prompt and first token as copy drafts' context; the switch is read at
+    startup (``engine.copy``), so a later environment change does not reach a running engine."""
+
+    from tensorfold.families.glm5_next.cuda import copy_drafts
+
+    seen = []
+    real = copy_drafts.CopyDrafts
+
+    def spy(context, prompt, *args, **kwargs):
+        seen.append((list(context), prompt))
+        return real(context, prompt, *args, **kwargs)
+
+    monkeypatch.setattr(copy_drafts, "CopyDrafts", spy)
+    monkeypatch.setenv("TF_GLM_COPY_DRAFTS", "0")
+    assert engine.copy is True
+    prompt = [int(t) for t in np.random.default_rng(5).integers(0, 1000, size=37)]
+    for policy in ("auto", "3"):
+        drafted, stats = _generate(engine, prompt, None, policy=policy)
+        assert seen[-1] == (prompt + drafted[:1], len(prompt)), policy
+        assert stats["copy_rounds"] == 0 and stats["copy_drafted"] == stats["copy_accepted"] == 0, stats
+    calls = len(seen)
+    serial, stats = _generate(engine, prompt, None, draft=False)
+    assert len(seen) == calls and "copy_rounds" not in stats and serial == drafted
+
+
 @pytest.mark.parametrize("sampling", [Sampling(1234, 1.0, 20, 0.95), None], ids=["sampled", "greedy"])
 def test_drafter_choice_equals_serial(engine_f, sampling):
     """Every policy with both drafters loaded, and the per-round choice made to switch often."""

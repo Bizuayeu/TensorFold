@@ -131,24 +131,27 @@ def cpu_loops(allocations, monkeypatch):  # noqa: F811
     monkeypatch.setattr(drafter_choice, "commit", lambda w, st, b, R, keep: setattr(st, "pos", st.pos + keep))
 
 
-def loop(kind: str, e, count: int, sampling, on_tokens):
+def loop(kind: str, e, count: int, sampling, on_tokens, copies=None):
     first = 7
+    more = {} if copies is None else {"copies": copies}
     if kind == "serial":
         return decode.serial_decode(e, first, count, sampling, stop_eos=True, on_tokens=on_tokens)
     if kind == "mtp":
         return decode.mtp_decode(e, first, count, sampling, policy=decode.DepthPolicy(3, fixed=True),
-                                 stop_eos=True, on_tokens=on_tokens)
+                                 stop_eos=True, on_tokens=on_tokens, **more)
     if kind == "dflash":
         return decode.dflash_decode(e, Drafter(e), first, count, sampling, policy=decode.DepthPolicy(2, fixed=True),
                                     stop_eos=True, on_tokens=on_tokens)
     return drafter_choice.auto_decode(e, None, first, count, sampling, choice=None,
                                       m_policy=decode.DepthPolicy(3, fixed=True),
-                                      f_policy=decode.DepthPolicy(5, fixed=True), stop_eos=True, on_tokens=on_tokens)
+                                      f_policy=decode.DepthPolicy(5, fixed=True), stop_eos=True, on_tokens=on_tokens,
+                                      **more)
 
 
 def run_ranks(kind: str, *, world: int = 2, count: int = 60, sampling=None, stop_at: int | None = None,
-              vote: bool = True):
-    """Each rank's loop on a thread, rank 0 stopping at call ``stop_at``: per rank (result, calls, engine)."""
+              vote: bool = True, copies: list[int] | None = None):
+    """Each rank's loop on a thread, rank 0 stopping at call ``stop_at``: per rank (result, calls, engine).
+    ``copies``: a context every rank's copy drafts search (all of it prompt), ending in the pending token 7."""
 
     comm = Comm(world) if world > 1 else None
     out: list = [None] * world
@@ -166,7 +169,12 @@ def run_ranks(kind: str, *, world: int = 2, count: int = 60, sampling=None, stop
             fn = on_tokens if r == 0 else (lambda new: None)
             if vote:
                 fn = e.vote = decode.StopVote(fn)
-            res = loop(kind, e, count, sampling, fn)
+            index = None
+            if copies is not None:
+                from tensorfold.families.glm5_next.cuda.copy_drafts import CopyDrafts
+
+                index = CopyDrafts(copies, len(copies) - 1)
+            res = loop(kind, e, count, sampling, fn, index)
             out[r] = (res, calls, e)
         except BaseException as exc:            # noqa: BLE001  reported by the test
             errors.append(exc)
@@ -235,12 +243,54 @@ def test_without_a_vote_the_loops_decode_to_the_end_as_before():
     assert all(len(res.tokens) == 60 for res, _, _ in ranks)
 
 
+# -- copy drafts: a context whose last 8 tokens occurred before, followed by the reply (or a reply off in places) ---
+Q = [50, 51, 52, 53, 54, 55, 56]             # 7 tokens, then the pending 7: a suffix seen once, at the start
+
+
+def copy_context(reply: list[int], wrong: bool = False) -> list[int]:
+    """Q, the pending token and the rest of the reply (every 20th token off with ``wrong``), then Q and the pending
+    token again: every round finds the reply's continuation (or, past a wrong token, after the 8 that follow it)."""
+
+    rest = [(t + 1) % V if wrong and i % 20 == 10 else t for i, t in enumerate(reply[1:])]
+    return Q + reply[:1] + rest + Q + reply[:1]
+
+
+@pytest.mark.parametrize("wrong", [False, True], ids=["right", "wrong"])
+@pytest.mark.parametrize("kind", ("mtp", "auto"))
+@pytest.mark.parametrize("mode", sorted(SAMPLINGS))
+def test_copied_rounds_keep_the_reply_and_a_stop_ends_every_rank(kind, mode, wrong):
+    """Copy drafts only propose: right or wrong, every rank's reply is the serial one; a stop during copied rounds
+    ends every rank after the next round, with the same gathers."""
+
+    sampling = SAMPLINGS[mode]
+    ref = run_ranks(kind, sampling=sampling, vote=False)[0][0][0]
+    context = copy_context(ref.tokens, wrong)
+    ranks, comm = run_ranks(kind, sampling=sampling, copies=context)
+    for res, _, _ in ranks:
+        assert res.tokens == ref.tokens and res.rounds < ref.rounds
+        assert res.copy_rounds > 1 and res.copy_drafted > 0
+        if wrong:
+            assert 0 <= res.copy_accepted < res.copy_drafted
+        else:
+            assert res.copy_accepted == res.copy_drafted          # every copied draft is the serial sample
+    assert ranks[0][0].depths == ranks[1][0].depths and comm.sizes[0] == comm.sizes[1]
+    for stop_at in (1, 3):
+        ranks, comm = run_ranks(kind, sampling=sampling, stop_at=stop_at, copies=context)
+        (r0, _, e0), (r1, _, e1) = ranks
+        assert r0.rounds == r1.rounds == stop_at + 1
+        assert r0.copy_rounds == r1.copy_rounds >= 1
+        assert r0.tokens == r1.tokens == ref.tokens[:len(r0.tokens)]
+        assert e0.vote.stop and e1.vote.stop and not e1.vote.mine
+        assert comm.sizes[0] == comm.sizes[1]
+
+
 # -- the engine: GlmEngine._run on two ranks ---------------------------------------------------------------------
-def glm_rank(r: int, comm):
+def glm_rank(r: int, comm, copy: bool = False):
     g = object.__new__(engine_mod.GlmEngine)
     e = FakeEngine(r, 2, comm)
     g.e, g.rank, g.world, g.eos = e, r, 2, (EOS,)
     g.drafter = None
+    g.copy = copy                               # TF_GLM_COPY_DRAFTS, read at startup
     g.costs, g.cache, g.live = {}, [], []
     g._remember = lambda snap: None
     return g
@@ -314,3 +364,58 @@ def test_engine_run_unstopped_is_unchanged(fake_prefill):
         t.join(WAIT)
     assert out[0] is not None and out[1] is not None
     assert "stopped" not in out[0] and out[0]["sha256"] == out[1]["sha256"]
+
+
+def engine_runs(prompt: list[int], *, copy: bool, spec: str = "3", stop_at: int | None = None):
+    """``_run`` on two ranks (rank 0 stopping at call ``stop_at``): per rank (stats, tokens heard)."""
+
+    comm = Comm(2)
+    out: list = [None, None]
+    errors: list = []
+
+    def rank(r: int) -> None:
+        heard: list[int] = []
+        calls: list = []
+
+        def server(new):
+            heard.extend(new)
+            calls.append(new)
+            return r == 0 and stop_at is not None and len(calls) >= stop_at
+
+        try:
+            g = glm_rank(r, comm, copy)
+            stats = g._run(prompt, 40, None, True, server, engine_mod.encode_policy(spec), None, True)
+            out[r] = (stats, heard)
+        except BaseException as exc:            # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=rank, args=(r,), name=f"rank-{r}") for r in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(WAIT)
+    assert not any(t.is_alive() for t in threads)
+    if errors:
+        raise errors[0]
+    return out
+
+
+@pytest.mark.parametrize("spec", ["3", "auto"])
+def test_engine_run_copies_from_the_prompt_and_stops_both_ranks(fake_prefill, spec):
+    """With copy drafts on, ``_run`` searches the prompt and the reply: a prompt that holds the reply after Q and
+    the first token drafts it from there on both ranks, the reply unchanged; a stop during those rounds ends both."""
+
+    plain = [60] * 50                            # the fake reply depends on the prompt's length only
+    (off, reply), _ = engine_runs(plain, copy=False, spec=spec)
+    assert "copy_rounds" not in off and len(reply) == 40
+    prompt = Q + reply[:1] + reply[1:36] + Q     # 50 tokens: the context (and the pending token) ends Q, reply[0]
+    runs = engine_runs(prompt, copy=True, spec=spec)
+    for stats, heard in runs:
+        assert heard == reply
+        assert stats["sha256"] == off["sha256"] and stats["rounds"] < off["rounds"]
+        assert stats["copy_rounds"] > 0 and stats["copy_accepted"] == stats["copy_drafted"] > 0
+    assert runs[0][0]["rounds"] == runs[1][0]["rounds"]
+    stopped = engine_runs(prompt, copy=True, spec=spec, stop_at=3)
+    for stats, heard in stopped:
+        assert stats["stopped"] and stats["rounds"] == 3 and stats["copy_rounds"] == 3
+    assert stopped[0][1] == reply[:len(stopped[0][1])]
