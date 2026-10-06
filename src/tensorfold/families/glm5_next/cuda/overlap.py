@@ -28,18 +28,19 @@ import torch
 from . import prof, reduce
 
 ROW_STEP = 128           # piece boundaries on multiples of this (the BF16 prompt matmul's 128-row blocks)
+PIECES_MAX = 16          # TF_GLM_OVERLAP_PIECES at most: an Overlap's slots and events are made for this many
 
 
 def settings(env=None) -> tuple[bool, int]:
-    """(on, pieces) from TF_GLM_PREFILL_OVERLAP (0 or 1) and TF_GLM_OVERLAP_PIECES (1 to 16)."""
+    """(on, pieces) from TF_GLM_PREFILL_OVERLAP (0 or 1) and TF_GLM_OVERLAP_PIECES (1 to PIECES_MAX)."""
 
     env = os.environ if env is None else env
     on = str(env.get("TF_GLM_PREFILL_OVERLAP", "") or "1").strip()
     if on not in ("0", "1"):
         raise ValueError(f"TF_GLM_PREFILL_OVERLAP: 0 or 1, not {on!r}")
     pieces = str(env.get("TF_GLM_OVERLAP_PIECES", "") or "4").strip()
-    if not pieces.isdecimal() or not 1 <= int(pieces) <= 16:
-        raise ValueError(f"TF_GLM_OVERLAP_PIECES: a whole number from 1 to 16, not {pieces!r}")
+    if not pieces.isdecimal() or not 1 <= int(pieces) <= PIECES_MAX:
+        raise ValueError(f"TF_GLM_OVERLAP_PIECES: a whole number from 1 to {PIECES_MAX}, not {pieces!r}")
     return on == "1", int(pieces)
 
 
@@ -59,7 +60,7 @@ class Overlap:
         self.stream = None                      # made with the events at the first pieced chunk
         self.active = False
         self.cut: list[tuple[int, int]] = []
-        self.got: list[torch.Tensor | None] = [None] * 16      # each piece's partials (or sums) for its glue
+        self.got: list[torch.Tensor | None] = [None] * PIECES_MAX      # each piece's partials (or sums) for its glue
         self.glued = 0                          # rows this rank glued at the current chunk's exchanges
 
     def begin(self, R: int) -> bool:
@@ -71,10 +72,10 @@ class Overlap:
         if self.active:
             if self.stream is None:
                 self.stream = torch.cuda.Stream()
-                self.filled = [torch.cuda.Event() for _ in range(16)]
-                self.gathered = [torch.cuda.Event() for _ in range(16)]
-                self.glues = [torch.cuda.Event() for _ in range(16)]
-                self.shared = [torch.cuda.Event() for _ in range(16)]
+                self.filled = [torch.cuda.Event() for _ in range(PIECES_MAX)]
+                self.gathered = [torch.cuda.Event() for _ in range(PIECES_MAX)]
+                self.glues = [torch.cuda.Event() for _ in range(PIECES_MAX)]
+                self.shared = [torch.cuda.Event() for _ in range(PIECES_MAX)]
             self.stream.wait_stream(torch.cuda.current_stream())
         return self.active
 
