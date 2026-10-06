@@ -555,6 +555,26 @@ def test_a_rank_copying_otherwise_is_named(checkpoints, monkeypatch):
         run_ranks(start, 3)
 
 
+def test_a_rank_using_other_decode_tiles_is_named(checkpoints, monkeypatch):
+    """TF_GLM_B16_DECODE_TABLE=0 on rank 1 only is refused at startup: every rank launches the same tiles."""
+
+    import threading
+
+    from tensorfold.families.glm5_next.cuda import qmm
+    from tensorfold.families.glm5_next.cuda.engine import GlmEngine
+
+    odd = threading.local()
+    real = qmm.decode_table
+    monkeypatch.setattr(qmm, "decode_table", lambda env=None: False if getattr(odd, "on", False) else real(env))
+
+    def start(r, comm):
+        odd.on = r == 1
+        GlmEngine(checkpoints["mlx"], rank=r, master="", port=0, world=3, comm=comm, graphs=False)
+
+    with pytest.raises(RuntimeError, match=r"different settings.*TF_GLM_B16_DECODE_TABLE.*rank 0 \[.*\], rank 1 \["):
+        run_ranks(start, 3)
+
+
 def test_a_rank_waiting_on_other_heat_bands_is_named(checkpoints, monkeypatch, tmp_path):
     """TF_GLM_HEAT_HIGH/LOW on rank 1 only is refused at startup: every rank must gather the same readings."""
 
