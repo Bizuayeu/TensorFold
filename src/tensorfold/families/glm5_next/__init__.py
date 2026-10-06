@@ -23,6 +23,27 @@ EXL3_VARIANT = {"bits": 4, "codebook": "mcg", "scope": "glm53_routed_experts_onl
 MLX_ENV = {"MLX_MAX_OPS_PER_BUFFER": "200", "MLX_MAX_MB_PER_BUFFER": "200", "MLX_ENABLE_TF32": "0"}
 
 
+MODELOPT_ALGOS = {"NVFP4", "W4A16_NVFP4"}    # ModelOpt layer algos the CUDA engine reads (W4A16: no input scale)
+
+
+def modelopt_nvfp4(found: dict) -> bool:
+    """Whether a ModelOpt quantization block is NVFP4, or MIXED_PRECISION whose layers are all NVFP4 or W4A16_NVFP4
+    (attention and the head re-packed weight-only beside NVFP4 experts)."""
+
+    algo = str(found.get("quant_algo") or "").upper()
+    if algo != "MIXED_PRECISION":
+        return algo == "NVFP4"
+    layers = {str(v.get("quant_algo", "")).upper() for v in (found.get("quantized_layers") or {}).values()}
+    return bool(layers) and layers <= MODELOPT_ALGOS
+
+
+def nvfp4_attention(names) -> int:
+    """How many of a checkpoint's tensor ``names`` are the scales of an NVFP4 projection outside the MLPs (attention
+    and the head): 0 for nvidia/GLM-5.3-Flash-NVFP4, whose NVFP4 is experts and dense MLPs only."""
+
+    return sum(1 for n in names if n.endswith(".weight_scale") and ".mlp." not in n)
+
+
 def _mac_reads(fmt: tuple) -> bool:
     from tensorfold.families.glm5_next.config import BITS, GROUPS
 
@@ -55,14 +76,18 @@ def check(model_dir: str | Path) -> None:
         print("[tensorfold] EXL3 support is experimental: replies are exact, but the MLX checkpoint "
               f"({MODELS[0]}) is tested more and runs faster (docs/recipes/glm-5.3-flash.md)", flush=True)
     elif method == "modelopt":
-        # the CUDA engine's: NVFP4 routed experts and dense MLPs on bf16 rows, BF16 elsewhere
+        # the CUDA engine's: NVFP4 routed experts and dense MLPs on bf16 rows, BF16 elsewhere (or W4A16 NVFP4
+        # attention and head)
         found = config.get("quantization_config") or {}
         algo = str(found.get("quant_algo") or "")
-        if algo.upper() != "NVFP4" or sys.platform == "darwin":
+        if not modelopt_nvfp4(found) or sys.platform == "darwin":
             where = "a Mac" if sys.platform == "darwin" else "CUDA"
-            raise ValueError("GLM-5.3-Flash reads ModelOpt NVFP4 checkpoints (nvidia/GLM-5.3-Flash-NVFP4's layout) "
-                             f"on its CUDA engine only; this one is ModelOpt {algo or 'without quant_algo'} on "
-                             f"{where}. {OWN_MODEL_HELP}")
+            if algo.upper() == "MIXED_PRECISION":
+                algo += " of " + ", ".join(sorted({str(v.get("quant_algo", "")) for v in
+                                                   (found.get("quantized_layers") or {}).values()}))
+            raise ValueError("GLM-5.3-Flash reads ModelOpt NVFP4 checkpoints (nvidia/GLM-5.3-Flash-NVFP4's layout, "
+                             "or MIXED_PRECISION of its NVFP4 with W4A16_NVFP4 attention and head) on its CUDA engine "
+                             f"only; this one is ModelOpt {algo or 'without quant_algo'} on {where}. {OWN_MODEL_HELP}")
     elif quantization(config) != (4, 64) and not (sys.platform == "darwin" and _mac_reads(quantization(config))):
         raise ValueError(f"GLM-5.3-Flash's Mac engine reads MLX affine weights of 2 to 8 bits in groups of 32, 64 or "
                          f"128 ({MODELS[0]} is 4-bit in groups of 64), and the CUDA engine 4-bit groups of 64 or "

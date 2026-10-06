@@ -15,6 +15,7 @@ from tensorfold.cuda import experts as grouped
 from tensorfold.cuda.exl3.experts import Exl3RoutedExperts as Exl3Experts
 from tensorfold.cuda.nvfp4 import experts as nvx
 from tensorfold.cuda.nvfp4.linear import Fp4Linear
+from .. import modelopt_nvfp4
 from . import latent
 from .qmm import B16, Q4, as_i32, make_b16, make_q4, quantize4, stack_b16, stack_q4
 from .split import UNIT
@@ -93,7 +94,7 @@ class Config:
         method = str(quant.get("quant_method") or "mlx").lower()
         if method == "modelopt":
             algo = str(quant.get("quant_algo") or "").lower()
-            method = "nvfp4" if algo == "nvfp4" else f"modelopt {algo or 'without quant_algo'}"
+            method = "nvfp4" if modelopt_nvfp4(quant) else f"modelopt {algo or 'without quant_algo'}"
         return cls(
             hidden=int(t["hidden_size"]), layers=n, vocab=int(t["vocab_size"]), eps=float(t["rms_norm_eps"]),
             heads=int(t["num_attention_heads"]), q_lora=int(t["q_lora_rank"]), kv_lora=int(t["kv_lora_rank"]),
