@@ -379,8 +379,9 @@ def _fake_tower(calls, hidden=16):
 
 
 def _vision(calls, offload=False):
-    from tensorfold.vision.glm_cuda import GLMCudaVision
     import threading
+
+    from tensorfold.vision.glm_cuda import GLMCudaVision
 
     torch = pytest.importorskip("torch")
     vision = object.__new__(GLMCudaVision)

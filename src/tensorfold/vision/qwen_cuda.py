@@ -112,6 +112,7 @@ def float_headers(model_dir: str | Path, sources: dict | None = None) -> dict[st
     `sources` is the Qwen path's (possibly TENSORFOLD_VISION_WEIGHTS-overridden) tensor listing; without it the
     checkpoint's own `vision_tensors` are read."""
     from tensorfold.cuda.capacity import SIZES
+
     from .qwen_checkpoint import vision_tensors
 
     if sources is None:

@@ -13,9 +13,9 @@ import torch
 if not torch.cuda.is_available():
     pytest.skip("CUDA only", allow_module_level=True)
 
-from tensorfold.engine.exact_sampling import Sampling  # noqa: E402
-
 from test_glm_engine import CONFIG, _checkpoint, _forget, _generate, _TwoCopies  # noqa: E402
+
+from tensorfold.engine.exact_sampling import Sampling  # noqa: E402
 
 PROMPT = 2100              # past the dense limit: the first reply token is already a sparse row
 CONTEXT = 2600

@@ -14,7 +14,7 @@ reply_match and miss_most; not its padding to 16-row windows), Apache License 2.
 from __future__ import annotations
 
 import os
-from typing import Sequence
+from collections.abc import Sequence
 
 import numpy as np
 
