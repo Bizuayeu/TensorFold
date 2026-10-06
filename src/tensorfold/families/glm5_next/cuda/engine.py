@@ -219,11 +219,11 @@ class GlmEngine:
         every = self._gather_ints(mine + [spare >> 20])
         odd = [r for r, row in enumerate(every) if row[:-1] != every[0][:-1]]
         if odd:
-            raise RuntimeError("the ranks were started with different settings (draft model, context, drafts, "
-                               "--vision, TF_GLM_LATENT, TF_GLM_MTP, TF_GLM_DRAFT_RING, TF_GLM_KV, "
-                               "TF_GLM_PREFILL_OVERLAP, TF_GLM_OVERLAP_PIECES, TF_GLM_PREFILL_REDUCE, "
+            raise RuntimeError("the ranks were started with different settings (the checkpoint's NVFP4 attention, "
+                               "draft model, context, drafts, --vision, TF_GLM_LATENT, TF_GLM_MTP, TF_GLM_DRAFT_RING, "
+                               "TF_GLM_KV, TF_GLM_PREFILL_OVERLAP, TF_GLM_OVERLAP_PIECES, TF_GLM_PREFILL_REDUCE, "
                                "TF_GLM_KDA_DECODE_WIDE, TF_GLM_COPY_DRAFTS, TF_GLM_B16_DECODE_TABLE, TF_GLM_HEAT_HIGH, "
-                                "TF_GLM_HEAT_LOW, TF_GLM_HEAT_CEILING, the checkpoint's NVFP4 attention): "
+                               "TF_GLM_HEAT_LOW, TF_GLM_HEAT_CEILING): "
                                f"rank 0 {every[0][:-1]}, "
                                + ", ".join(f"rank {r} {every[r][:-1]}" for r in odd) +
                                "; pull the draft model on every machine (or pass --drafter none to all) and give all "
