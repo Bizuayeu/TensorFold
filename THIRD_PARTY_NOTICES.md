@@ -96,7 +96,8 @@ No code is taken; this tree keeps the all-gather and pieces it by rows. Each ran
 reduce-scattered chunk and sending them to the others (`reduce.owned` and `reduce.share`,
 `TF_GLM_PREFILL_REDUCE=split`) follows the row split of their patch 0010, with shares of uneven size after their
 patches 0067 and 0068 (a 2,048-row chunk at three ranks had run unsplit); no code is taken from them either. The
-prompt pool scores' rows per program (`sparse.SCORE_RB`, 4) follow the default of their patch 0009-glm-prefill-kernels.
+prompt pool scores' rows per program (`sparse.SCORE_RB`) follow their patch 0009-glm-prefill-kernels, whose default is
+4; this tree uses 16.
 
 GLM on three ranks takes three things from ashhart/TensorFold PR #159 (full GLM-5.3 on four ranks, by drowzeys,
 under this repository's Apache License 2.0; read at the PR head `befd47d`, from its commits `7779fe0` and `028698c`):
