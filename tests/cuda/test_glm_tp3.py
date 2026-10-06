@@ -515,6 +515,26 @@ def test_a_rank_reducing_otherwise_is_named(checkpoints, monkeypatch):
         run_ranks(start, 3)
 
 
+def test_a_rank_running_kda_windows_otherwise_is_named(checkpoints, monkeypatch):
+    """TF_GLM_KDA_DECODE_WIDE=0 on rank 1 only is refused at startup: the switch is read once, the same everywhere."""
+
+    import threading
+
+    from tensorfold.families.glm5_next.cuda import kda
+    from tensorfold.families.glm5_next.cuda.engine import GlmEngine
+
+    odd = threading.local()
+    real = kda.decode_wide
+    monkeypatch.setattr(kda, "decode_wide", lambda env=None: False if getattr(odd, "on", False) else real(env))
+
+    def start(r, comm):
+        odd.on = r == 1
+        GlmEngine(checkpoints["mlx"], rank=r, master="", port=0, world=3, comm=comm, graphs=False)
+
+    with pytest.raises(RuntimeError, match=r"different settings.*TF_GLM_KDA_DECODE_WIDE.*rank 0 \[.*\], rank 1 \["):
+        run_ranks(start, 3)
+
+
 def test_a_rank_waiting_on_other_heat_bands_is_named(checkpoints, monkeypatch, tmp_path):
     """TF_GLM_HEAT_HIGH/LOW on rank 1 only is refused at startup: every rank must gather the same readings."""
 

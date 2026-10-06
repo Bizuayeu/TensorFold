@@ -170,7 +170,7 @@ class State:
     """Committed caches of one sequence (and of the MTP head's attention layer). ``kv`` (TF_GLM_KV): the latents' and
     pooled index keys' format, bf16 or fp8 (``kv8``: a uint8 row a token / pool, with the latent cache only)."""
 
-    def __init__(self, w: Weights, capacity: int, rows: int, *, kv: str = "bf16") -> None:
+    def __init__(self, w: Weights, capacity: int, rows: int, *, kv: str = "bf16", kda_wide: bool = False) -> None:
         c = w.cfg
         dev = w.device
         HL = w.plan.count(c.heads)
@@ -191,6 +191,10 @@ class State:
         self.proj = torch.zeros((n, rows, width), dtype=torch.bfloat16, device=dev)
         self.scratch_set = kda_mod.KDAScratchSet(n, rows, LL, dev) if n else None
         self.scratch = self.scratch_set.views if n else []
+        # TF_GLM_KDA_DECODE_WIDE: windows run the three-kernel chain, its scratch held before any graph capture
+        self.kda_wide = kda_wide
+        if n and kda_wide:
+            kda_mod.reserve(self.scratch_set, rows)
         self.latent = latent.ENABLED
         if kv not in KV_KINDS or (kv != "bf16" and not self.latent):
             raise ValueError(f"TF_GLM_KV={kv}: bf16, or fp8 with the latent cache (TF_GLM_LATENT=1)")
@@ -323,7 +327,7 @@ def kda_block(layer: LayerW, w: Weights, st: State, b: Buffers, R: int, cut: Cut
         with prof.timed("kda: chain"):
             out = kda_mod.chain(p, k.b_off, b.ka[:R], b.kg[:R], st.conv[li], k.conv, st.rec[cur, li], k.a_log,
                                 k.dt_bias, k.norm, c.eps, c.lower, R, b.kscratch if pre else st.scratch[li],
-                                st.rec[1 - cur, li])
+                                st.rec[1 - cur, li], wide=True if not pre and st.kda_wide else None)
     else:
         n = cut.point
         first = kda_mod.chain(p[:n], k.b_off, b.ka[:n], b.kg[:n], st.conv[li], k.conv, st.rec[cur, li],

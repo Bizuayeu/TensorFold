@@ -97,9 +97,11 @@ class Engine:
 
     def __init__(self, w: Weights, *, capacity: int = 2560, max_rows: int = 8, prefill_rows: int = PREFILL_ROWS,
                  graphs: bool = False, graph_rows: tuple[int, ...] = (1, 2, 3, 4), long_context: bool = False,
-                 taps: tuple[int, ...] = (), kv: str | None = None) -> None:
-        """``kv``: the DSA caches' format (default TF_GLM_KV, bf16 unless set; ``kv8``)."""
+                 taps: tuple[int, ...] = (), kv: str | None = None, kda_wide: bool | None = None) -> None:
+        """``kv``: the DSA caches' format (default TF_GLM_KV, bf16 unless set; ``kv8``). ``kda_wide``: decode windows
+        on KDA's three-kernel chain (default TF_GLM_KDA_DECODE_WIDE, on unless 0)."""
         from . import kv_kind
+        from .kda import decode_wide
 
         self.w = w
         w.meta["long_context"] = long_context
@@ -110,7 +112,8 @@ class Engine:
             self.buf.set_taps(tuple(taps), w.cfg.hidden)         # before any graph capture
             self.pbuf.set_taps(tuple(taps), w.cfg.hidden)
         self.mbuf = Buffers(w, max_rows, capacity) if w.mtp is not None else None
-        self.st = State(w, capacity, max_rows, kv=kv_kind() if kv is None else kv)
+        self.st = State(w, capacity, max_rows, kv=kv_kind() if kv is None else kv,
+                        kda_wide=decode_wide() if kda_wide is None else kda_wide)
         self.last_hidden: torch.Tensor | None = None
         self.constraint = self.window = None            # a request's grammar, and the next sample's rows under it
         self.vote: StopVote | None = None               # rides on every verify sample's all-gather

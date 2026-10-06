@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -59,6 +60,16 @@ def replay_layers(state_in: torch.Tensor, scratch: KDAScratchSet, rows: int, sta
 WIDE_ROWS = 64          # windows of this many rows or more (prefill chunks) run the chain in three kernels
 
 
+def decode_wide(env=None) -> bool:
+    """TF_GLM_KDA_DECODE_WIDE: decode windows (1 to 8 rows) run the chain in three kernels too (``1``, the default)
+    or in the fused kernel (``0``); the same bits either way, every rank the same."""
+
+    value = (os.environ if env is None else env).get("TF_GLM_KDA_DECODE_WIDE", "1").strip() or "1"
+    if value not in ("0", "1"):
+        raise ValueError(f"TF_GLM_KDA_DECODE_WIDE is 0 or 1, not {value!r}")
+    return value == "1"
+
+
 def _wide_scratch(owner, rows: int, heads: int, device) -> tuple[torch.Tensor, torch.Tensor]:
     """The normalized q and the read-out of a long window, kept on ``owner`` (a scratch or its set): shared by the
     layers of one buffer (they run one after another), not by engines that run at once (ranks as threads in tests)."""
@@ -68,6 +79,13 @@ def _wide_scratch(owner, rows: int, heads: int, device) -> tuple[torch.Tensor, t
         y = torch.empty((rows, heads, DV), dtype=torch.bfloat16, device=device)
         owner.wide = (q, y)
     return q, y
+
+
+def reserve(scratch: KDAScratchSet, rows: int) -> None:
+    """Hold the three-kernel chain's scratch for windows of up to ``rows`` rows now: a CUDA graph keeps the address
+    it captured, so the scratch must not grow after a capture."""
+
+    _wide_scratch(scratch, rows, scratch.heads, scratch.out.device)
 
 
 def chain(p: torch.Tensor, b_off: int, a: torch.Tensor, g: torch.Tensor, conv_state: torch.Tensor,

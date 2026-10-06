@@ -87,7 +87,8 @@ sparse attention beyond that boundary if the startup memory estimate admits it o
 is capped to the remaining space. Larger-context restart advice appears only when the estimate allows it.
 
 Prompt prefill uses the shared CUDA prefill kernels. Decode uses CUDA graphs, past the dense limit one per
-pool bucket. The engine keeps up to 8 conversations' prompts (`TF_GLM_CACHE_ENTRIES`): when another
+pool bucket. A decode window's KDA layers run the same three kernels as a prompt chunk of 64 rows or more, with the same
+bits as the fused kernel; `TF_GLM_KDA_DECODE_WIDE=0` (both ranks the same) returns to the fused kernel. The engine keeps up to 8 conversations' prompts (`TF_GLM_CACHE_ENTRIES`): when another
 conversation takes the attention caches, a kept prompt's rows are saved. Kept states and saved rows together get
 `TF_GLM_CACHE_GIB` (default 3), or less when the window leaves less memory on either Spark; the startup log says
 when it is less, and the memory estimate includes it. Earlier turns keep their reasoning in the prompt

@@ -312,6 +312,52 @@ def test_resumed_prompt_equals_a_fresh_prefill(engine, sampling):
     assert serial == cold
 
 
+def test_kda_decode_windows_on_three_kernels_keep_the_fused_bits_in_graphs(engine, monkeypatch):
+    """TF_GLM_KDA_DECODE_WIDE: decode windows on KDA's three-kernel chain, replayed from CUDA graphs (1 to 6 rows) or
+    eager (7 and 8), give the fused chain's logits and states bit for bit, windows kept only in part included; the
+    scratch the graphs captured stays where it was, whatever window comes after a wider one. Every decode window
+    (captured or eager) asks for the path its engine was given."""
+
+    from tensorfold.families.glm5_next.cuda import kda
+    from tensorfold.families.glm5_next.cuda.decode import Engine, prefill
+    from tensorfold.families.glm5_next.cuda.engine import GRAPH_ROWS
+    from tensorfold.families.glm5_next.cuda.forward import commit
+
+    asked = []
+    real = kda.chain
+
+    def spy(*args, wide=None):
+        if args[13].owner is not args[13]:               # a decode window's scratch: a view of the layers' set
+            asked.append(wide)
+        return real(*args, wide=wide)
+
+    monkeypatch.setattr(kda, "chain", spy)
+    rng = np.random.default_rng(16)
+    prompt = [int(t) for t in rng.integers(0, 1000, size=60)]
+    windows = [(1, 1), (6, 4), (3, 3), (1, 1), (8, 5), (7, 7), (2, 1), (6, 6), (4, 2), (5, 5)]   # (rows, kept)
+    ids = [[int(t) for t in rng.integers(0, 1000, size=rows)] for rows, _ in windows]
+    runs = []
+    for wide in (True, False):
+        asked.clear()
+        e = Engine(engine.w, capacity=2560, max_rows=8, prefill_rows=64, graphs=True, graph_rows=GRAPH_ROWS,
+                   kda_wide=wide)
+        held = e.st.scratch_set.wide[0].data_ptr() if wide else None
+        prefill(e, prompt, None)
+        before = dict(e.replays)
+        steps = []
+        for (rows, keep), window in zip(windows, ids):
+            logits = e.forward(window).clone()
+            commit(e.w, e.st, e.buf, rows, keep)
+            steps.append([logits] + [t.clone() for t in _state(e)])
+        assert e.replays["main"] - before["main"] == 8 and e.replays["eager"] - before["eager"] == 2
+        assert (e.st.scratch_set.wide[0].data_ptr() == held) if wide else not hasattr(e.st.scratch_set, "wide")
+        assert asked and set(asked) == {True if wide else None}, wide
+        runs.append(steps)
+        del e
+    for window, a, b in zip(windows, *runs):
+        assert all(torch.equal(x, y) for x, y in zip(a, b)), window
+
+
 def test_prompt_chunks_leave_the_same_state(engine):
     """A 300-row prompt in 2,048-, 100-, 16- and 7-row chunks: the same first token and bit-identical states (the
     grouped NVFP4 kernel's prompt items and the dense prompt GEMM never depend on the chunk)."""
