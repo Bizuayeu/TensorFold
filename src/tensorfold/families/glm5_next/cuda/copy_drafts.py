@@ -21,8 +21,10 @@ import numpy as np
 MATCH = 8          # the context's last this many tokens must have occurred before (in the prompt)
 REPLY_MATCH = 16   # ... or this many, for an occurrence that starts inside the reply
 MOST = 5           # drafts a round: the window (6 rows) stays within the captured graphs (engine.GRAPH_ROWS)
-# cc-defer: 3 is the MTP depth auto drafts (a 4-row window, verify ~10 ms under the 6-row one); untuned (Mia ships it
-# off), the pair's A/B of bench --kinds edit decides it
+# 3 is the MTP depth auto drafts (a 4-row window, verify ~10 ms under the 6-row one). Measured at TP=2 against 1 and 5
+# (MOST, no cut): bench --kinds edit 57.5 / 57.4 / 57.9 tok/s and the counting check 43.4 / 43.7 / 43.7, the same
+# tokens; 5's +0.8% on edits is under the +1% a speed change needs, 1 costs counting 0.6%. Measure again on a load
+# whose copies miss often.
 MISS_MOST = 3      # drafts a copied round after one that missed
 
 
