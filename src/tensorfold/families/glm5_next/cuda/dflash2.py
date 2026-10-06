@@ -13,6 +13,7 @@ import triton
 import triton.language as tl
 from safetensors import safe_open
 
+from tensorfold.cuda.nvfp4.linear import Fp4Linear
 from tensorfold.engine.exact_sampling import Sampling, uniform_rows
 
 from . import glue, qmm
@@ -150,6 +151,8 @@ def _quantize4(w: torch.Tensor) -> qmm.Q4:
 
 
 def _mm(x: torch.Tensor, w: qmm.Q4, xs: torch.Tensor | None = None, *, f32: bool = False) -> torch.Tensor:
+    if isinstance(w, Fp4Linear):                 # the model's NVFP4 head (W4A16), which drafts read as it is
+        return w(x, f32=f32)
     return qmm.matmul(x, w, xs, f32=f32)
 
 

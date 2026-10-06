@@ -225,7 +225,7 @@ class Weights:
     embed: tuple[torch.Tensor, torch.Tensor, torch.Tensor]
     layers: list[LayerW]
     norm: torch.Tensor
-    head: Q4 | B16
+    head: Q4 | B16 | Fp4Linear        # NVFP4 (W4A16) where the checkpoint stores it so; it drafts too
     mtp: MTPW | None
     rank: int
     world: int
@@ -312,10 +312,42 @@ def load(model_dir: str | Path, *, rank: int, world: int = 2, device: str = "cud
     def q4(name: str) -> Q4 | B16:
         return make_b16(t(name + ".weight")) if bf16 else make_q4(*trip(name))
 
-    def stack(names: list[str]) -> Q4 | B16:
+    def packed(name: str) -> bool:
+        """Whether projection ``name`` is stored NVFP4 (W4A16: attention and the head of the checkpoints that re-pack
+        them; the routed experts and dense MLPs have their own readers)."""
+
+        return nvfp4 and PREFIX + name + ".weight_scale" in rd.index
+
+    def lin(name: str) -> Q4 | B16 | Fp4Linear:
+        """A projection as stored: NVFP4 where the checkpoint has its scales, else ``q4``."""
+
+        return fp4(name) if packed(name) else q4(name)
+
+    def stack(names: list[str]) -> Q4 | B16 | Fp4Linear:
+        if any(packed(n) for n in names):
+            return stack_fp4(names)
         if bf16:
             return stack_b16([t(n + ".weight") for n in names])
         return stack_q4([trip(n) for n in names])
+
+    def stack_fp4(names: list[str]) -> Fp4Linear:
+        """NVFP4 projections of one input as one matmul under their one weight scale, the codes' rows zero-padded to a
+        multiple of 8: each row of its output then starts 16-byte aligned, as the matmuls reading columns of it in
+        place (KDA's f_a and g_a) load their rows."""
+
+        if not all(packed(n) for n in names):
+            raise ValueError(f"{', '.join(names)}: some stored NVFP4 and some not; one matmul takes one format")
+        scales = sorted({float(rd.get(PREFIX + n + ".weight_scale_2")) for n in names})
+        if len(scales) != 1:
+            raise ValueError(f"{', '.join(names)}: weight_scale_2 {scales} differ; these projections run as one "
+                             "matmul under one weight scale")
+        codes = torch.cat([t(n + ".weight") for n in names])
+        blocks = torch.cat([t(n + ".weight_scale").view(torch.uint8) for n in names])
+        pad = -codes.shape[0] % 8
+        if pad:
+            codes = torch.cat([codes, codes.new_zeros((pad, codes.shape[1]))])
+            blocks = torch.cat([blocks, blocks.new_zeros((pad, blocks.shape[1]))])
+        return Fp4Linear.from_checkpoint(codes, blocks, scales[0])
 
     def hc(i: int, site: str) -> HCW:
         return HCW(t(f"layers.{i}.hc_{site}_fn").contiguous(), t(f"layers.{i}.hc_{site}_base", torch.float32),
@@ -327,8 +359,8 @@ def load(model_dir: str | Path, *, rank: int, world: int = 2, device: str = "cud
         # the KDA kernels take fp32 taps: NVIDIA's NVFP4 checkpoint's as stored, MLX's and EXL3's bf16 widened exactly
         conv = torch.cat([t(p + f"{x}_conv1d.weight", torch.float32) for x in "qkv"]).reshape(
             3 * LL * 128, cfg.conv).contiguous()
-        return KDAW(proj, q4(p + "f_b_proj"), q4(p + "g_b_proj"), conv, t(p + "A_log", torch.float32).contiguous(),
-                    t(p + "dt_bias", torch.float32).contiguous(), t(p + "o_norm.weight"), q4(p + "o_proj"), LL)
+        return KDAW(proj, lin(p + "f_b_proj"), lin(p + "g_b_proj"), conv, t(p + "A_log", torch.float32).contiguous(),
+                    t(p + "dt_bias", torch.float32).contiguous(), t(p + "o_norm.weight"), lin(p + "o_proj"), LL)
 
     def dsa(i: int) -> DSAW:
         p = f"layers.{i}.self_attn."
@@ -354,12 +386,12 @@ def load(model_dir: str | Path, *, rank: int, world: int = 2, device: str = "cud
         else:
             absorb = latent.AbsorbW.from_rows(latent.dequant_mlx4(w[krows], s[krows], b[krows], cfg.group_size),
                                               latent.dequant_mlx4(w[vrows], s[vrows], b[vrows], cfg.group_size), HL)
-        ix = IndexW(stack([p + "indexer.wk", p + "indexer.weights_proj"]), q4(p + "indexer.wq_b"),
+        ix = IndexW(stack([p + "indexer.wk", p + "indexer.weights_proj"]), lin(p + "indexer.wq_b"),
                     t(p + "indexer.k_norm.weight"), t(p + "indexer.k_norm.bias"),
                     t(p + "indexer.index_kpool_compress_gate", torch.bfloat16).contiguous(),
                     t(p + "indexer.index_kpool_compress_ape", torch.bfloat16).contiguous())
-        return DSAW(proj, t(p + "q_a_layernorm.weight"), t(p + "kv_a_layernorm.weight"), q4(p + "q_b_proj"),
-                    kv_k, kv_v, q4(p + "o_proj"), HL, ix, absorb)
+        return DSAW(proj, t(p + "q_a_layernorm.weight"), t(p + "kv_a_layernorm.weight"), lin(p + "q_b_proj"),
+                    kv_k, kv_v, lin(p + "o_proj"), HL, ix, absorb)
 
     def fp4(name: str) -> Fp4Linear:
         """A ModelOpt NVFP4 projection as stored: codes, e4m3 scales and the fp32 weight scale (W4A16)."""
@@ -504,7 +536,11 @@ def load(model_dir: str | Path, *, rank: int, world: int = 2, device: str = "cud
         built = [layer(i, nxt=n) for i, n in zip(which, which[1:] + [cfg.layers])]   # the last one reads MTP's ahead
         lo, hi = plan.span(cfg.vocab, UNIT)
         draft_head = None
-        if bf16:
+        if bf16 and "lm_head.weight_scale" in rd.index:      # an NVFP4 head (W4A16): drafts read it too
+            head = Fp4Linear.from_checkpoint(rd.get("lm_head.weight")[lo:hi].to(dev),
+                                             rd.get("lm_head.weight_scale")[lo:hi].to(dev),
+                                             float(rd.get("lm_head.weight_scale_2")))
+        elif bf16:
             head = make_b16(rd.get("lm_head.weight")[lo:hi].to(dev))
             # Draft steps use the quantized head; verification keeps the original head.
             draft_head = quantize4(head.weight)
