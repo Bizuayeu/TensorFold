@@ -23,8 +23,11 @@ import torch
 import triton
 import triton.language as tl
 
-PAD = 16             # bytes after an FP8 row's codes: its fp32 scale, then zeros (the kernels' literal 16)
-SHIFT = 8            # a row's scale: 2^(ceil(log2 amax) - SHIFT), so its codes stay within +-256 (the kernels' 8)
+from tensorfold.cuda.geometry import MLA_FP8_ROW_PAD as PAD  # bytes after an FP8 row's codes: its fp32 scale, zeros
+
+SHIFT = 8            # a row's scale: 2^(ceil(log2 amax) - SHIFT), so its codes stay within +-256
+# the kernels' PAD and SHIFT: a Triton kernel reads only constexpr globals, folded where the literals were
+_PAD, _SHIFT = tl.constexpr(PAD), tl.constexpr(SHIFT)
 
 
 def quantized(cache: torch.Tensor) -> bool:
@@ -81,7 +84,7 @@ def scale_of(amax):
     within 1 .. 254: a zero row gets 2^-126 and zeros)."""
     bits = amax.to(tl.int32, bitcast=True)
     e = ((bits >> 23) & 0xFF) + ((bits & 0x7FFFFF) != 0).to(tl.int32)
-    e = tl.minimum(tl.maximum(e - 8, 1), 254)
+    e = tl.minimum(tl.maximum(e - _SHIFT, 1), 254)
     return (e << 23).to(tl.float32, bitcast=True), ((254 - e) << 23).to(tl.float32, bitcast=True)
 
 
@@ -92,7 +95,7 @@ def store_row(C, row, x, LW: tl.constexpr):
     k = tl.arange(0, LW)
     xf = x.to(tl.bfloat16).to(tl.float32)
     s, inv = scale_of(tl.max(tl.abs(xf), 0))
-    at = C + row * (LW + 16)
+    at = C + row * (LW + _PAD)
     tl.store(at + k, (xf * inv).to(tl.float8e4nv))
     tl.store((at + LW).to(tl.pointer_type(tl.float32), bitcast=True), s)
 
@@ -101,7 +104,7 @@ def store_row(C, row, x, LW: tl.constexpr):
 def load_rows(C, rows, ok, k, LW: tl.constexpr):
     """Rows ``rows`` (int64 [n]) of an FP8 cache: their codes as a bf16 tile [n, LW] (exact) and their scales [n];
     rows with ok false are not read (zeros, scale 1)."""
-    at = C + rows * (LW + 16)
+    at = C + rows * (LW + _PAD)
     kv = tl.load(at[:, None] + k[None, :], mask=ok[:, None], other=0.0).to(tl.bfloat16)
     s = tl.load((at + LW).to(tl.pointer_type(tl.float32), bitcast=True), mask=ok, other=1.0)
     return kv, s

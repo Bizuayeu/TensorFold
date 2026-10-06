@@ -15,6 +15,7 @@ MLA_SELECT_ROWS = 512       # GLM's prompt-chunk rows whose pool scores are held
 MLA_B16_ROWS_FROM = 128     # GLM's windows from this many rows sum BF16 K slices in registers (qmm.B16_ROWS_FROM)
 MLA_B16_SLICES = 8          # GLM's BF16 matmuls split K into at most this many slices (qmm.b16_split_k)
 MLA_B16_PART_COLS = 16384   # columns a buffer's BF16 split-K partials hold a row (a wider matmul makes its own)
+MLA_FP8_ROW_PAD = 16        # bytes after a TF_GLM_KV=fp8 cache row's codes: its fp32 scale, then zeros (kv8.PAD)
 
 
 def indexed_prefill_rows() -> int | None:
@@ -312,7 +313,7 @@ def mla_row_bytes(width: int, kv: str = "bf16") -> int:
     (families/glm5_next/cuda/kv8.py)."""
     if kv not in ("bf16", "fp8"):
         raise ValueError(f"a GLM DSA cache is bf16 or fp8, not {kv!r}")
-    return width + 16 if kv == "fp8" else 2 * width
+    return width + MLA_FP8_ROW_PAD if kv == "fp8" else 2 * width
 
 
 def mla_cache_bytes(t: dict, world: int, capacity: int, *, latent: bool, mtp: bool | None = None,
