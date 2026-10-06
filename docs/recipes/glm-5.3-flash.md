@@ -88,7 +88,7 @@ is capped to the remaining space. Larger-context restart advice appears only whe
 
 Prompt prefill uses the shared CUDA prefill kernels. Decode uses CUDA graphs, past the dense limit one per
 pool bucket. A decode window's KDA layers run the same three kernels as a prompt chunk of 64 rows or more, with the same
-bits as the fused kernel; `TF_GLM_KDA_DECODE_WIDE=0` (both ranks the same) returns to the fused kernel. The engine keeps up to 8 conversations' prompts (`TF_GLM_CACHE_ENTRIES`): when another
+bits as the fused kernel; `TF_GLM_KDA_DECODE_WIDE=0` (both ranks the same) returns to the fused kernel. A reply whose last 8 tokens occurred before in the prompt (16 inside the reply) drafts up to 5 tokens that followed them ahead of the MTP head, copy drafts that only propose like any draft; `TF_GLM_COPY_DRAFTS=0` (both ranks the same) leaves them out. The engine keeps up to 8 conversations' prompts (`TF_GLM_CACHE_ENTRIES`): when another
 conversation takes the attention caches, a kept prompt's rows are saved. Kept states and saved rows together get
 `TF_GLM_CACHE_GIB` (default 3), or less when the window leaves less memory on either Spark; the startup log says
 when it is less, and the memory estimate includes it. Earlier turns keep their reasoning in the prompt
