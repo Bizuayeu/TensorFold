@@ -451,7 +451,7 @@ void kda_chain_wide_cuda(const at::Tensor& P, int64_t p_stride, int64_t b_off, c
         ptr<__nv_bfloat16>(cs), ptr<float>(cw), ptr<float>(a_log), ptr<float>(dt_bias), (float)lower,
         ptr<float>(q_tmp), ptr<float>(k_save), ptr<__nv_bfloat16>(v_save), ptr<float>(g_save), ptr<float>(b_save));
     C10_CUDA_KERNEL_LAUNCH_CHECK();
-    constexpr int WARPS = 8, TR = 16;          // fastest on GB10 (records/.../prefill-2)
+    constexpr int WARPS = 8, TR = 16;          // fastest on GB10
     step_kernel<WARPS, TR><<<dim3((unsigned)H, DV / 4 / WARPS), WARPS * 32, 0, stream>>>(
         H, ptr<float>(state_in), ptr<float>(q_tmp), ptr<float>(k_save), ptr<__nv_bfloat16>(v_save),
         ptr<float>(g_save), ptr<float>(b_save), (int)rows, ptr<__nv_bfloat16>(y_tmp), ptr<float>(state_out));

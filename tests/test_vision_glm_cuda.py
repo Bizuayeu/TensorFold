@@ -331,7 +331,7 @@ def test_rank_zeros_workspace_is_the_measured_tower_peak_and_the_features():
     assert workspace_bytes(real, 8000, 8000) == 32000 * PATCH_BYTES + 2 * 8000 * 4096 * 2
     assert workspace_bytes(real, 8000, 65536) == 32000 * PATCH_BYTES + 2 * 65536 * 4096 * 2   # still one image a call
     assert workspace_bytes(real, 8000, 2048) == 8192 * PATCH_BYTES + 2 * 2048 * 4096 * 2      # a smaller budget
-    # GB10 (records/20261004-e1-vision/measure_tower.log): an 8,000-token image peaked 1,281.6 MiB over the tower,
+    # GB10: an 8,000-token image peaked 1,281.6 MiB over the tower,
     # and a process's first call 32 MiB more
     assert workspace_bytes(real, 8000, 8000) >= (1281.6 + 32) * 2**20
 

@@ -14,8 +14,8 @@ from tensorfold.cuda.capacity import SIZES
 from .qwen_cuda import EncodedVision, float_headers
 
 # GLM-5.3-Flash's BF16 tower on GB10, one image a call through SDPA's flash or efficient kernels: 40.8-41.0 KiB a
-# patch over its weights at 8,192, 16,384 and 32,000 patches, and 32 MiB more on a process's first call
-# (records/20261004-e1-vision/measure_tower.log); rounded up to cover both
+# patch over its weights at 8,192, 16,384 and 32,000 patches, and 32 MiB more on a process's first call; rounded up
+# to cover both
 PATCH_BYTES = 43 * 1024
 
 
