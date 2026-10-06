@@ -146,7 +146,8 @@ class GlmEngine:
         from .decode import Engine
         from .weights import load
         from .split import ShardPlan, rule
-        from tensorfold.cuda.capacity import admit
+        from .. import nvfp4_attention
+        from tensorfold.cuda.capacity import admit, headers
         from tensorfold.cuda.geometry import (PREFILL_ROWS, dflash2_geometry, dflash2_weights, mla_geometry,
                                               split_weights)
         from tensorfold.vision.glm_cuda import capacity_geometry, weight_transform as vision_weights
@@ -209,7 +210,8 @@ class GlmEngine:
         mine = [int(drafter is not None), capacity, int(long_context), int(serial_only), int(LATENT),
                 prefill_rows, int(self.mtp_on), int(DRAFT_RING), KV_KINDS.index(self.kv), *map(int, overlap.settings()),
                 reduce.MODES.index(reduce.settings(comm=self.comm)), int(self.kda_wide), int(self.copy),
-                int(self.b16_table), *bands, int(vision)]
+                int(self.b16_table), *bands, int(vision),
+                nvfp4_attention(headers(model_dir, rank=rank))]     # the checkpoint: pinned or attention NVFP4
         # other conversations' kept prompts get what the window leaves, at most TF_GLM_CACHE_GIB, the same on every rank
         plan = self.capacity_plan
         wanted = int(float(os.environ.get("TF_GLM_CACHE_GIB", "3")) * 2 ** 30)
@@ -221,11 +223,11 @@ class GlmEngine:
                                "--vision, TF_GLM_LATENT, TF_GLM_MTP, TF_GLM_DRAFT_RING, TF_GLM_KV, "
                                "TF_GLM_PREFILL_OVERLAP, TF_GLM_OVERLAP_PIECES, TF_GLM_PREFILL_REDUCE, "
                                "TF_GLM_KDA_DECODE_WIDE, TF_GLM_COPY_DRAFTS, TF_GLM_B16_DECODE_TABLE, TF_GLM_HEAT_HIGH, "
-                               "TF_GLM_HEAT_LOW, TF_GLM_HEAT_CEILING): "
+                                "TF_GLM_HEAT_LOW, TF_GLM_HEAT_CEILING, the checkpoint's NVFP4 attention): "
                                f"rank 0 {every[0][:-1]}, "
                                + ", ".join(f"rank {r} {every[r][:-1]}" for r in odd) +
                                "; pull the draft model on every machine (or pass --drafter none to all) and give all "
-                               "the same flags")
+                               "the same flags and checkpoint")
         self.cache_bytes = min(row[-1] for row in every) << 20
         plan["kept_bytes"] = self.cache_bytes
         for key in ("serving_peak_bytes_estimate", "total_bytes_estimate"):
