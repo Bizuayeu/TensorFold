@@ -57,11 +57,11 @@ kernel, the dense MLP on the exact NVFP4 matmuls; the static input scales are no
 stay fp32 as stored. `--precision checkpoint`
 (FP4 rows) is refused when named, since the grouped expert kernel has no input-scale path. The MTP layer's 288 BF16
 routed experts are packed to NVFP4 at load by ModelOpt's recipe, about 4.85 GiB less a rank; they only draft, and
-verification never reads them, so replies are unchanged. The visual tower is not loaded. The startup estimate is
-about 91 GiB of weights a rank. On two DGX Sparks (GB10, 128 GB each) with MTP drafts only, `--context 0`
-allocated a 334,264- to 357,585-token window, short prompts decoded at 29.6 / 27.8 / 33.8 / 27.6 tok/s (code and
-chat, sampled and greedy, 64 tokens, median of 5 seeds), and drafted replies equaled `"draft": false` ones (15 of
-15, prompts of 14 to 32,762 tokens). Long-context qualification is TBD.
+verification never reads them, so replies are unchanged. The BF16 visual tower is loaded only with `--vision`, on rank 0
+([vision](../vision.md)). The startup estimate is about 91 GiB of weights a rank without it. On two DGX Sparks (GB10,
+128 GB each) with MTP drafts only, `--context 0` allocated a 334,264- to 357,585-token window, short prompts decoded at
+29.6 / 27.8 / 33.8 / 27.6 tok/s (code and chat, sampled and greedy, 64 tokens, median of 5 seeds), and drafted replies
+equaled `"draft": false` ones (15 of 15, prompts of 14 to 32,762 tokens). Long-context qualification is TBD.
 
 ### Draft policies
 
