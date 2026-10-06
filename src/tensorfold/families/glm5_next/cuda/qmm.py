@@ -183,8 +183,10 @@ def stack_b16(parts: list[torch.Tensor]) -> B16:
     return make_b16(torch.cat([p.to(torch.bfloat16) for p in parts]))
 
 
-# BF16 matmuls: columns and K per step; the K slices come from ``split_k`` as for Q4 (fixed by the shape)
+# BF16 matmuls: columns per program (speed only) and K per step; the K slices come from ``b16_split_k`` (fixed by the
+# shape). BK and the slices are the sums' order: no tile width may change them
 B16_BN, B16_BK = 64, 64
+B16_SPLIT_COLS = 64       # the column width ``b16_split_k`` counts tiles of: the order's reference, never a launch's tile
 
 
 @triton.jit
@@ -285,14 +287,20 @@ def matmul(x: torch.Tensor, q: Q4 | B16, xs: torch.Tensor | None = None, *, out:
 
 
 def b16_split_k(n: int, k: int) -> int:
-    """K slices of a BF16 matmul: like ``split_k``, fixed by the shape, in units of B16_BK."""
+    """K slices of a BF16 matmul: like ``split_k``, fixed by the shape (never the tile), in units of B16_BK."""
 
-    tiles = -(-n // B16_BN)
+    tiles = -(-n // B16_SPLIT_COLS)
     steps = k // B16_BK
     sk = 1
     while sk < 8 and tiles * sk < SPLIT_TARGET and steps % (sk * 2) == 0 and steps // (sk * 2) >= 4:
         sk *= 2
     return sk
+
+
+def b16_tile(n: int, k: int, bm: int) -> tuple[int, int, int]:
+    """(BLOCK_N, warps, stages) of an n x k BF16 matmul's ``_bmm`` launch at a bm-row bucket: speed only."""
+
+    return (B16_BN, *B16_CONFIG[bm])
 
 
 def _matmul_b16(x: torch.Tensor, q: B16, *, out: torch.Tensor | None, f32: bool,
@@ -301,7 +309,6 @@ def _matmul_b16(x: torch.Tensor, q: B16, *, out: torch.Tensor | None, f32: bool,
     if k != q.k or x.stride(1) != 1 or x.dtype != torch.bfloat16 or k % B16_BK:
         raise ValueError(f"matmul: x {tuple(x.shape)} {x.dtype} does not match K={q.k}")
     bm = bucket(min(m, 128))              # a prompt chunk runs as 128-row blocks: no bucket changes a row's bits
-    warps, stages = B16_CONFIG[bm]
     sk = b16_split_k(q.n, q.k)
     if out is None:
         out = torch.empty((m, q.n), dtype=torch.float32 if f32 else torch.bfloat16, device=x.device)
@@ -317,9 +324,10 @@ def _matmul_b16(x: torch.Tensor, q: B16, *, out: torch.Tensor | None, f32: bool,
         need = sk * m * q.n
         if part is None or part.numel() < need:
             part = torch.empty((need,), dtype=torch.float32, device=x.device)
-    grid = (triton.cdiv(m, bm), triton.cdiv(q.n, B16_BN), sk)
+    bn, warps, stages = b16_tile(q.n, k, bm)
+    grid = (triton.cdiv(m, bm), triton.cdiv(q.n, bn), sk)
     _bmm[grid](x, q.weight, out, part if sk > 1 else out, m, x.stride(0), N=q.n, K=k, SK=sk, BM=bm,
-               BLOCK_N=B16_BN, BK=B16_BK, F32=f32, num_warps=warps, num_stages=stages)
+               BLOCK_N=bn, BK=B16_BK, F32=f32, num_warps=warps, num_stages=stages)
     if sk > 1:
         total = m * q.n
         _reduce[(triton.cdiv(total, 1024),)](part, out, total, SK=sk, BLOCK=1024, F32=f32, num_warps=4)
