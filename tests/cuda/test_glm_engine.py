@@ -38,13 +38,18 @@ CONFIG = {
 }
 
 
-def _checkpoint(path, exl3: bool = False, mtp: bool = True, nvfp4: bool = False, *, heads: int = 2,
-                lin_heads: int = 2, moe_width: int = MOE, dense_width: int = 256, vocab: int = V) -> None:
+def _checkpoint(path, exl3: bool = False, mtp: bool = True, nvfp4: bool = False, *, attention: bool = False,
+                heads: int = 2, lin_heads: int = 2, moe_width: int = MOE, dense_width: int = 256,
+                vocab: int = V) -> None:
     """The synthetic model as an MLX 4-bit checkpoint, or with ``exl3`` as an EXL3 one: routed experts as trellis
     tiles with their scales, every other weight BF16 (the layout of Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw); with
     ``nvfp4`` as a ModelOpt NVFP4 one (nvidia/GLM-5.3-Flash-NVFP4's layout): routed experts and the dense MLP as e2m1
     codes, e4m3 scales per 16 inputs and fp32 weight and input scales, the MTP layer and every other weight BF16.
-    ``mtp=False`` leaves out the MTP layer (the last tensors written, so the others keep their values). ``heads``,
+    ``attention`` (with ``nvfp4``): the attention projections and lm_head too, W4A16 NVFP4 under quant_algo
+    MIXED_PRECISION (Bizuayeu/GLM-5.3-Flash-NVFP4-attn-lmhead-W4A16's layout): no input scales; KDA's q, k, v, f_a,
+    g_a and b and DSA's q_a and kv_a quantized together (one weight scale, as stored there); every weight scale a
+    power of two, so the dequantized values are exact in bf16; the MTP layer and the indexer's wk and weights_proj
+    BF16. ``mtp=False`` leaves out the MTP layer (the last tensors written, so the others keep their values). ``heads``,
     ``lin_heads`` (128 wide), ``moe_width``, ``dense_width`` and ``vocab`` resize the split axes (defaults: CONFIG's)."""
 
     rng = np.random.default_rng(3)
@@ -72,6 +77,22 @@ def _checkpoint(path, exl3: bool = False, mtp: bool = True, nvfp4: bool = False,
         scalar(name + ".weight_scale_2", float(g[0]))
         scalar(name + ".input_scale", float(rng.uniform(0.01, 0.02)))
 
+    def w4a16(parts: list[tuple[str, int]], k: int, scale: float = 0.01) -> None:
+        """Projections of one input (name, rows) quantized together by ModelOpt's recipe, the weight scale rounded to
+        a power of two."""
+        from tensorfold.cuda.nvfp4 import experts as nvx
+
+        rows = sum(n for _, n in parts)
+        w = torch.tensor(rng.standard_normal((1, rows, k)) * 4.6 * scale, dtype=torch.float32).to(torch.bfloat16)
+        words, scales, g = nvx.quantize(w)
+        g = 2.0 ** round(float(np.log2(float(g[0]))))
+        r = 0
+        for name, n in parts:
+            tensors.append((name + ".weight", "U8", [n, k // 2], words[0, r:r + n].numpy().reshape(-1)))
+            tensors.append((name + ".weight_scale", "F8_E4M3", [n, k // 16], scales[0, r:r + n].numpy().reshape(-1)))
+            scalar(name + ".weight_scale_2", g)
+            r += n
+
     def q4(name: str, n: int, k: int, scale: float = 0.01) -> None:
         if exl3 or nvfp4:         # the BF16 weight whose 4-bit version the MLX layout stores
             bf16(name + ".weight", [n, k], 4.6 * scale)
@@ -89,17 +110,22 @@ def _checkpoint(path, exl3: bool = False, mtp: bool = True, nvfp4: bool = False,
             tensors.append((name + "." + part, "F16", [size], v.view(np.uint8).reshape(-1)))
         tensors.append((name + ".mcg", "I32", [1], np.array([0xCBAC1FED], dtype=np.uint32).view(np.uint8)))
 
-    def dsa(p: str) -> None:
-        q4(p + "self_attn.q_a_proj", 128, D)
-        q4(p + "self_attn.kv_a_proj_with_mqa", 128, D)
+    def dsa(p: str, packed: bool = False) -> None:
+        a = p + "self_attn."
+        lin = (lambda name, n, k: w4a16([(name, n)], k)) if packed else q4
+        if packed:
+            w4a16([(a + "q_a_proj", 128), (a + "kv_a_proj_with_mqa", 128)], D)
+        else:
+            q4(a + "q_a_proj", 128, D)
+            q4(a + "kv_a_proj_with_mqa", 128, D)
         bf16(p + "self_attn.q_a_layernorm.weight", [128], 0.05, 1.0)
         bf16(p + "self_attn.kv_a_layernorm.weight", [128], 0.05, 1.0)
-        q4(p + "self_attn.q_b_proj", heads * 256, 128)
-        q4(p + "self_attn.kv_b_proj", heads * 512, 128)
-        q4(p + "self_attn.o_proj", D, heads * 256)
+        lin(p + "self_attn.q_b_proj", heads * 256, 128)
+        lin(p + "self_attn.kv_b_proj", heads * 512, 128)
+        lin(p + "self_attn.o_proj", D, heads * 256)
         q4(p + "self_attn.indexer.wk", 128, D)
         q4(p + "self_attn.indexer.weights_proj", 2, D)
-        q4(p + "self_attn.indexer.wq_b", 2 * 128, 128)
+        lin(p + "self_attn.indexer.wq_b", 2 * 128, 128)
         bf16(p + "self_attn.indexer.k_norm.weight", [128], 0.05, 1.0)
         bf16(p + "self_attn.indexer.k_norm.bias", [128])
         bf16(p + "self_attn.indexer.index_kpool_compress_gate", [128, D])
@@ -126,7 +152,11 @@ def _checkpoint(path, exl3: bool = False, mtp: bool = True, nvfp4: bool = False,
     L = "model.language_model."
     q4(L + "embed_tokens", vocab, D, 0.02)
     bf16(L + "norm.weight", [D], 0.05, 1.0)
-    q4("lm_head", vocab, D)
+    packed = nvfp4 and attention
+    if packed:
+        w4a16([("lm_head", vocab)], D)
+    else:
+        q4("lm_head", vocab, D)
     for i in (0, 1):
         p = f"{L}layers.{i}."
         bf16(p + "input_layernorm.weight", [D], 0.05, 1.0)
@@ -137,23 +167,34 @@ def _checkpoint(path, exl3: bool = False, mtp: bool = True, nvfp4: bool = False,
             f32(p + f"hc_{site}_scale", [3], 0.1, 1.0)
     p = L + "layers.0.self_attn."
     lw = lin_heads * 128
-    for x in "qkv":
-        q4(p + f"{x}_proj", lw, D)
-        (f32 if nvfp4 else bf16)(p + f"{x}_conv1d.weight", [lw, 1, 4], 0.3)     # fp32 in NVIDIA's NVFP4 layout
-    q4(p + "f_a_proj", 128, D)
-    q4(p + "g_a_proj", 128, D)
-    q4(p + "b_proj", lin_heads, D)
-    q4(p + "f_b_proj", lw, 128)
-    q4(p + "g_b_proj", lw, 128)
+    if packed:
+        w4a16([(p + "q_proj", lw), (p + "k_proj", lw), (p + "v_proj", lw), (p + "f_a_proj", 128),
+               (p + "g_a_proj", 128), (p + "b_proj", lin_heads)], D)
+        for x in "qkv":
+            f32(p + f"{x}_conv1d.weight", [lw, 1, 4], 0.3)
+        w4a16([(p + "f_b_proj", lw)], 128)
+        w4a16([(p + "g_b_proj", lw)], 128)
+    else:
+        for x in "qkv":
+            q4(p + f"{x}_proj", lw, D)
+            (f32 if nvfp4 else bf16)(p + f"{x}_conv1d.weight", [lw, 1, 4], 0.3)     # fp32 in NVIDIA's NVFP4 layout
+        q4(p + "f_a_proj", 128, D)
+        q4(p + "g_a_proj", 128, D)
+        q4(p + "b_proj", lin_heads, D)
+        q4(p + "f_b_proj", lw, 128)
+        q4(p + "g_b_proj", lw, 128)
     f32(p + "A_log", [lin_heads], 0.5)
     f32(p + "dt_bias", [lw], 0.5)
     bf16(p + "o_norm.weight", [128], 0.05, 1.0)
-    q4(p + "o_proj", D, lw)
+    if packed:
+        w4a16([(p + "o_proj", D)], lw)
+    else:
+        q4(p + "o_proj", D, lw)
     dense = fp4 if nvfp4 else q4
     dense(L + "layers.0.mlp.gate_proj", dense_width, D)
     dense(L + "layers.0.mlp.up_proj", dense_width, D)
     dense(L + "layers.0.mlp.down_proj", D, dense_width)
-    dsa(L + "layers.1.")
+    dsa(L + "layers.1.", packed)
     moe(L + "layers.1.")
     if mtp:
         m = L + "layers.2."
@@ -186,6 +227,14 @@ def _checkpoint(path, exl3: bool = False, mtp: bool = True, nvfp4: bool = False,
                        "model.language_model.layers.1.mlp.gate", "model.language_model.layers.1.mlp.shared_experts*",
                        "model.language_model.layers.2*"],
             "kv_cache_scheme": {"dynamic": False, "num_bits": 8, "type": "float"}}
+        if packed:
+            names = {n for n, *_ in tensors}
+            config["quantization_config"].update(quant_algo="MIXED_PRECISION", quantized_layers={
+                n[:-len(".weight_scale")]: {"quant_algo": "NVFP4" if n[:-len("weight_scale")] + "input_scale" in names
+                                            else "W4A16_NVFP4", "group_size": 16}
+                for n in sorted(names) if n.endswith(".weight_scale")})
+            ignore = config["quantization_config"]["ignore"]
+            ignore[:] = [x for x in ignore if x != "lm_head" and "self_attn" not in x]
     (path / "config.json").write_text(json.dumps(config))
 
 
