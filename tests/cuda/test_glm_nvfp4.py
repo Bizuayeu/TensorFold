@@ -343,11 +343,13 @@ def test_estimate_counts_what_the_weights_hold(path, engine):
 
 
 def test_weights_count_the_latent_paths_kv_b(engine):
-    """Each DSA layer's ``latent.AbsorbW`` (kv_b split per head, a second copy beside kv_k / kv_v) is in ``nbytes``."""
+    """Each DSA layer's ``latent.AbsorbW`` (kv_b split per head) is in ``nbytes``, and is its only copy of kv_b: the
+    key and value rows kv_k / kv_v, which only TF_GLM_LATENT=0 reads, are not held."""
 
     dsa = [L.dsa for L in engine.w.layers if L.dsa is not None] + [engine.w.mtp.layer.dsa]
     held = [a.absorb for a in dsa]
     assert all(isinstance(h, latent.AbsorbW) for h in held)
+    assert all(a.kv_k is None and a.kv_v is None for a in dsa)
     full = engine.w.nbytes()
     try:
         for a in dsa:

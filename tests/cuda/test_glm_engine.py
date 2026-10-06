@@ -286,27 +286,35 @@ def engine_x(tmp_path_factory):
     return GlmEngine(path / "model", rank=0, master="", port=0, drafter=path / "dflash2", comm=_TwoCopies())
 
 
+@pytest.mark.parametrize("on", [True, False], ids=["latent", "per-head"])
 @pytest.mark.parametrize("exl3", [False, True], ids=["mlx4", "exl3"])
-def test_estimate_counts_the_latent_paths_kv_b(tmp_path, exl3):
-    """The latent path's second copy of kv_b (``latent.AbsorbQ4`` on MLX 4-bit g64 rows, ``latent.AbsorbW`` in BF16
-    on EXL3) is in ``nbytes`` and in the startup estimate, at the same size (the whole rank: test_glm_nvfp4)."""
+def test_estimate_counts_the_latent_paths_kv_b(tmp_path, monkeypatch, exl3, on):
+    """Each DSA layer holds kv_b once: with the latent path (the default) as its per-head copy (``latent.AbsorbQ4``
+    on MLX 4-bit g64 rows, ``latent.AbsorbW`` in BF16 on EXL3), without kv_k / kv_v, which only TF_GLM_LATENT=0
+    reads; ``nbytes`` and the startup estimate count the same bytes for it (the whole rank: test_glm_nvfp4)."""
 
     from tensorfold.cuda.capacity import headers
     from tensorfold.cuda.geometry import split_weights
     from tensorfold.families.glm5_next.cuda import latent, split
     from tensorfold.families.glm5_next.cuda.weights import load
 
+    monkeypatch.setattr(latent, "ENABLED", on)
     _checkpoint(tmp_path, exl3=exl3)
     w = load(tmp_path, rank=0, world=2)
     dsa = [L.dsa for L in w.layers if L.dsa is not None] + [w.mtp.layer.dsa]
-    held = [a.absorb for a in dsa]
-    assert all(isinstance(h, latent.AbsorbW if exl3 else latent.AbsorbQ4) for h in held)
+    if on:
+        assert all(isinstance(a.absorb, latent.AbsorbW if exl3 else latent.AbsorbQ4) for a in dsa)
+        assert all(a.kv_k is None and a.kv_v is None for a in dsa)
+    else:
+        assert all(a.absorb is None and a.kv_k is not None and a.kv_v is not None for a in dsa)
     full = w.nbytes()
     for a in dsa:
-        a.absorb = None
-    on, off = (split_weights(split.rule, w.plan, latent=x) for x in (True, False))
-    copy = sum(on(name, info)[0] - off(name, info)[0] for name, info in headers(tmp_path).items())
-    assert full - w.nbytes() == copy == sum(h.nbytes() for h in held) > 0
+        a.absorb = a.kv_k = a.kv_v = None
+    transform = split_weights(split.rule, w.plan, latent=on)
+    kv_b = sum(transform(name, info)[0] for name, info in headers(tmp_path).items() if ".self_attn.kv_b_proj." in name)
+    assert full - w.nbytes() == kv_b > 0
+    del w
+    torch.cuda.empty_cache()
 
 
 def _forget(engine) -> None:
