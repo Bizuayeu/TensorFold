@@ -171,8 +171,8 @@ class DSAW:
     q_norm: torch.Tensor
     kv_norm: torch.Tensor
     q_b: Q4
-    kv_k: Q4                  # key rows of kv_b for the local heads
-    kv_v: Q4                  # value rows
+    kv_k: Q4 | B16 | None     # key rows of kv_b for the local heads (TF_GLM_LATENT=0 only)
+    kv_v: Q4 | B16 | None     # value rows (TF_GLM_LATENT=0 only)
     o: Q4
     heads: int
     index: IndexW | None = None
@@ -335,16 +335,18 @@ def load(model_dir: str | Path, *, rank: int, world: int = 2, device: str = "cud
         krows, vrows = rows[:, :cfg.qk_dim].reshape(-1), rows[:, cfg.qk_dim:].reshape(-1)
         if bf16:
             w = t(p + "kv_b_proj.weight")
-            kv_k, kv_v = make_b16(w[krows]), make_b16(w[vrows])
-            full_k, full_v = (lambda: w[krows].float()), (lambda: w[vrows].float())
         else:
             w, s, b = trip(p + "kv_b_proj")
-            kv_k = make_q4(w[krows], s[krows], b[krows])
-            kv_v = make_q4(w[vrows], s[vrows], b[vrows])
+        kv_k = kv_v = None                    # the latent path reads only its own copy (absorb)
         if not latent.ENABLED:
             absorb = None
+            if bf16:
+                kv_k, kv_v = make_b16(w[krows]), make_b16(w[vrows])
+            else:
+                kv_k = make_q4(w[krows], s[krows], b[krows])
+                kv_v = make_q4(w[vrows], s[vrows], b[vrows])
         elif bf16:
-            absorb = latent.AbsorbW.from_rows(full_k(), full_v(), HL)
+            absorb = latent.AbsorbW.from_rows(w[krows].float(), w[vrows].float(), HL)
         elif cfg.group_size == 64:        # the checkpoint's own 4-bit rows, read as they are stored
             absorb = latent.AbsorbQ4((w[krows], s[krows], b[krows]), (w[vrows], s[vrows], b[vrows]), HL)
         else:

@@ -140,8 +140,8 @@ def _most(total: int, world: int, unit: int = 1) -> int:
 def split_weights(rule, plan, *, latent: bool = True):
     """GLM's rank (``plan``, the family's ``split.ShardPlan``) of a checkpoint as loaded; ModelOpt NVFP4 projections
     as stored (a routed expert's fp32 scale held per expert, a dense one's a number), the MTP layer's BF16 routed
-    experts at the NVFP4 size they are packed to. With ``latent`` (``TF_GLM_LATENT``) each DSA layer's kv_b is held
-    twice: its key and value rows, and the latent path's per-head copy (``_absorbed``)."""
+    experts at the NVFP4 size they are packed to. Each DSA layer's kv_b is held once: with ``latent``
+    (``TF_GLM_LATENT``) as the latent path's per-head copy (``_absorbed``), else as its key and value rows."""
 
     cfg = plan.cfg
 
@@ -167,7 +167,7 @@ def split_weights(rule, plan, *, latent: bool = True):
                               ".hc_ffn_scale", ".e_score_correction_bias"))
         total = padded(info, shape, float32=cast, name=name)
         if latent and ".self_attn.kv_b_proj." in name:
-            total += _absorbed(name, info, shape, cfg)
+            total = _absorbed(name, info, shape, cfg)
         if name == "lm_head.weight" and info["dtype"] in ("BF16", "F16", "F32"):
             # the additional 4-bit draft head, its rows padded to 128 as ``qmm.pack`` pads them
             total += -(-shape[0] // 128) * 128 * math.prod(shape[1:]) * 9 // 16
