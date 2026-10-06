@@ -106,7 +106,8 @@ held (4-bit copies and its selector's codebooks, 0.63 GiB a rank), not at 4 byte
 
 A decode window's BF16 projections (1 to 8 rows) launch with a tile chosen per weight shape on GB10
 (`qmm.B16_DECODE_SHAPES`, swept by `tools/bench_glm_b16_decode.py`); the K slices and the order of the sums stay the
-shape's, so the bits are the same. `TF_GLM_B16_DECODE_TABLE=0` launches every shape with the default tile.
+shape's, so the bits are the same. `TF_GLM_B16_DECODE_TABLE=0` (both ranks the same) launches every shape with the
+default tile.
 
 ### Long contexts: the latent cache
 

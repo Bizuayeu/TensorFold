@@ -272,8 +272,19 @@ B16_ROWS_SHAPES: dict[str, tuple[int, int, int, int, int]] = {
     "4096x1024": (64, 64, 4, 3, 1),          # the shared expert's down
     "8192x1536": (128, 64, 4, 3, 8),         # DSA's q_b
 }
-# TF_GLM_B16_DECODE_TABLE=0: every decode window on (B16_BN, *B16_CONFIG[16]), not B16_DECODE_SHAPES (the same bits)
-B16_DECODE_TABLE = os.environ.get("TF_GLM_B16_DECODE_TABLE", "1").strip() != "0"
+
+
+def decode_table(env=None) -> bool:
+    """TF_GLM_B16_DECODE_TABLE: decode windows take B16_DECODE_SHAPES' tiles (``1``, the default) or every one
+    (B16_BN, *B16_CONFIG[16]) (``0``); the same bits either way, every rank the same."""
+
+    value = (os.environ if env is None else env).get("TF_GLM_B16_DECODE_TABLE", "1").strip() or "1"
+    if value not in ("0", "1"):
+        raise ValueError(f"TF_GLM_B16_DECODE_TABLE is 0 or 1, not {value!r}")
+    return value == "1"
+
+
+B16_DECODE_TABLE = decode_table()
 # BLOCK_N, warps, stages of a decode window's _bmm (the 16-row bucket, 1..8 rows): speed only, the K slices stay the
 # shape's; each the fastest on GB10 beyond the sweep's noise at 1, 4 and 8 rows, every tile checked for today's bits
 # (tools/bench_glm_b16_decode.py); the rest stay on today's tile
