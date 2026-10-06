@@ -383,6 +383,28 @@ def test_each_rank_holds_its_startup_estimate(paths, world):
     torch.cuda.empty_cache()
 
 
+@pytest.mark.parametrize("world", [2, 3])
+def test_rank_folders_load_as_the_checkpoint(paths, tmp_path, world):
+    """Each rank's folder written by the split (codes and scales cut alike, weight scales and the whole head kept) loads
+    what the checkpoint read in place loads, and counts the same NVFP4 projections for the startup agreement."""
+
+    from test_glm_nvfp4 import _tensors
+
+    from tensorfold.cuda.capacity import headers
+    from tensorfold.families.glm5_next import nvfp4_attention
+    from tensorfold.families.glm5_next.cuda.weights import load
+
+    path = paths[{2: "two", 3: "three"}[world]]
+    for rank in range(world):
+        out = tmp_path / f"rank{rank}"
+        split.main([str(path), "--world", str(world), "--rank", str(rank), str(out)])
+        assert nvfp4_attention(headers(out, rank=rank)) == nvfp4_attention(headers(path)) == 16
+        a, b = (_tensors(load(p, rank=rank, world=world)) for p in (path, out))
+        assert a and len(a) == len(b) and all(torch.equal(x, y) for x, y in zip(a, b)), rank
+        del a, b
+    torch.cuda.empty_cache()
+
+
 def test_a_rank_serving_another_checkpoint_is_named(paths):
     """Rank 0 on the NVFP4 attention checkpoint (16 NVFP4 projections outside the MLPs: the head, KDA's nine, DSA's
     six), rank 1 on its BF16 twin: refused at startup."""
