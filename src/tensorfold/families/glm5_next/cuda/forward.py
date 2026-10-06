@@ -469,7 +469,7 @@ def moe_block(layer: LayerW, w: Weights, b: Buffers, R: int) -> torch.Tensor:
         if m.shared is None:
             grouped.route(b.pick[:R], b.plan)
         elif nv:                         # a prompt plan's items as the NVFP4 prompt kernel takes them
-            grouped.route(b.pick[:R], b.plan, nvx.PROMPT_TILE)
+            grouped.route(b.pick[:R], b.plan, nvx.STAGED_TILE)
     if nv:
         # NVFP4: the routed slots through the grouped NVFP4 kernel (a prompt chunk's through its prompt form), the
         # shared expert (last slot) through BF16 matmuls

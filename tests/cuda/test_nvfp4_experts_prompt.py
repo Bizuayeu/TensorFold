@@ -44,7 +44,7 @@ def _picks(rows: int, seed: int) -> torch.Tensor:
 
 def _plan(picks: torch.Tensor, prefill: bool = True) -> grouped.Plan:
     plan = grouped.Plan(picks.shape[0], picks.shape[1], E + 1, "cuda", prefill=prefill)
-    grouped.route(picks.contiguous(), plan, nvx.PROMPT_TILE if prefill else nvx.PREFILL_TILE)
+    grouped.route(picks.contiguous(), plan, nvx.STAGED_TILE if prefill else nvx.PREFILL_TILE)
     return plan
 
 

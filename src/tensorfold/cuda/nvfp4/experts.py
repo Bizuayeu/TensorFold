@@ -11,7 +11,7 @@ from tensorfold.cuda import experts as grouped
 COLS = 32                 # output columns a block
 WORDS = 144               # int32 a (32 columns, 32 inputs) block: 128 code words, then 16 of e4m3 scales
 PREFILL_TILE = 16         # this kernel's prompt item: 64 ran 1.53x slower on Flash Next's routed prompts
-PROMPT_TILE = 64          # ``experts_prompt.cu``'s item: 64 pairs x 128 columns staged through shared memory
+STAGED_TILE = 64          # ``experts_prompt.cu``'s item: 64 pairs x 128 columns staged through shared memory
 
 
 def _i32(v: torch.Tensor) -> torch.Tensor:
@@ -105,8 +105,8 @@ def _prompt(epi: int, x: torch.Tensor, slots: int, w: torch.Tensor, scale: torch
             plan: grouped.Plan, out: torch.Tensor, n: int, limit: float, skip: int, rows: int) -> None:
     from .linear import _ext
 
-    if not plan.prefill or plan.tile != PROMPT_TILE:
-        raise ValueError(f"the NVFP4 prompt kernel takes a prompt plan routed in items of {PROMPT_TILE} pairs")
+    if not plan.prefill or plan.tile != STAGED_TILE:
+        raise ValueError(f"the NVFP4 prompt kernel takes a prompt plan routed in items of {STAGED_TILE} pairs")
     items = grouped.max_items(rows * plan.slots, plan.experts, plan.tile)
     _ext().experts_prompt(epi, x, x.stride(0), slots, w, scale, kg, nb, plan.items, plan.counts, plan.members, out, n,
                           limit, skip, items)
