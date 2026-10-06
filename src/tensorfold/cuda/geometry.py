@@ -13,6 +13,8 @@ PREFILL_ATT_ROWS = 256  # Flash Next's prompt attention block
 MLA_PROMPT_ATT_ROWS = 512   # GLM's prompt-chunk rows one dense latent attention call takes (forward.PROMPT_ATT_ROWS)
 MLA_SELECT_ROWS = 512       # GLM's prompt-chunk rows whose pool scores are held at once (sparse.SELECT_ROWS)
 MLA_B16_ROWS_FROM = 128     # GLM's windows from this many rows sum BF16 K slices in registers (qmm.B16_ROWS_FROM)
+MLA_B16_SLICES = 8          # GLM's BF16 matmuls split K into at most this many slices (qmm.b16_split_k)
+MLA_B16_PART_COLS = 16384   # columns a buffer's BF16 split-K partials hold a row (a wider matmul makes its own)
 
 
 def indexed_prefill_rows() -> int | None:
@@ -355,7 +357,7 @@ def mla_geometry(t: dict, world: int, reserve: int, *, minimum_slots: int = 2560
     extent = d * streams + vocab + slots * (d + width) + heads * (2 * kd + vd)
     extent += int(t.get("q_lora_rank", d)) * 2 + int(t.get("kv_lora_rank", d)) * 2
     extent += 3 * _most(int(t.get("intermediate_size", width)), world, 64) + int(t.get("index_n_heads", 32)) * index
-    fixed += (2 if mtp else 1) * (16 * rows * extent * 4 + 8 * rows * 16384 * 4)
+    fixed += (2 if mtp else 1) * (16 * rows * extent * 4 + MLA_B16_SLICES * rows * MLA_B16_PART_COLS * 4)
     # prompt-chunk buffers: at most 5 row extents a row without the head
     fixed += PREFILL_ROWS * 5 * (extent - vocab)
     quant = (t.get("_quantization") or {}).get("quant_method")
@@ -365,7 +367,7 @@ def mla_geometry(t: dict, world: int, reserve: int, *, minimum_slots: int = 2560
         fixed += exl3_expert_scratch(PREFILL_ROWS, slots, d, width)
     if quant in ("exl3", "modelopt"):
         # the BF16 split-K partials of prompt windows under MLA_B16_ROWS_FROM rows (BF16 attention, shared expert)
-        fixed += 8 * min(PREFILL_ROWS, MLA_B16_ROWS_FROM - 1) * 16384 * 4
+        fixed += MLA_B16_SLICES * min(PREFILL_ROWS, MLA_B16_ROWS_FROM - 1) * MLA_B16_PART_COLS * 4
     lw = int(t.get("kv_lora_rank", 512))
     mla_cache_bytes(t, world, 0, latent=latent, kv=kv)          # a bad format fails here
     def bytes_at(capacity: int) -> int:

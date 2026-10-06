@@ -9,7 +9,7 @@ import torch
 import triton
 import triton.language as tl
 
-from tensorfold.cuda.geometry import MLA_B16_ROWS_FROM
+from tensorfold.cuda.geometry import MLA_B16_PART_COLS, MLA_B16_ROWS_FROM, MLA_B16_SLICES
 from tensorfold.cuda.kernels import qmm as shared
 
 BN = 64                   # columns per stored tile
@@ -263,6 +263,8 @@ def _bmm_rows(X, W, OUT, M, x_stride, N: tl.constexpr, K: tl.constexpr, SK: tl.c
 B16_CONFIG = {16: (4, 3), 32: (4, 3), 64: (4, 2), 128: (8, 2)}
 # windows of this many rows or more (prompt chunks) take _bmm_rows: no partials, the same bits
 B16_ROWS_FROM = MLA_B16_ROWS_FROM
+# K slices a BF16 matmul takes at most, and the columns a row of a buffer's partials (``part``) holds
+B16_SLICES, B16_PART_COLS = MLA_B16_SLICES, MLA_B16_PART_COLS
 # rows, columns, warps, stages, row-block group of a _bmm_rows program: speed only (every one gives the same bits);
 # the fastest of 18 on GB10 for 2,048 rows of GLM-5.3-Flash's per-rank shapes, else the default
 B16_ROWS_CONFIG = (128, 64, 8, 4, 8)
@@ -323,7 +325,7 @@ def b16_split_k(n: int, k: int) -> int:
     tiles = -(-n // B16_SPLIT_COLS)
     steps = k // B16_BK
     sk = 1
-    while sk < 8 and tiles * sk < SPLIT_TARGET and steps % (sk * 2) == 0 and steps // (sk * 2) >= 4:
+    while sk < B16_SLICES and tiles * sk < SPLIT_TARGET and steps % (sk * 2) == 0 and steps // (sk * 2) >= 4:
         sk *= 2
     return sk
 
