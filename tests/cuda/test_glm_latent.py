@@ -396,3 +396,29 @@ def test_select_tokens_scores_hold_one_row_block():
     scores = sparse.SELECT_ROWS * (cap // 4) * 4
     assert bool((counts > 0).all())
     assert scores <= used < 2 * scores, used                    # one block's scores (512 MiB), not 2,048 rows' (2 GiB)
+
+
+@cuda
+@pytest.mark.parametrize("R", [64, 100, 2048])
+def test_prompt_absorb_and_expand_keep_the_one_loop_bits(monkeypatch, R):
+    """Prompt windows' BF16 absorb / expand over row blocks give every row the bits of the kernels that loop over all
+    rows in one program."""
+    from tensorfold.families.glm5_next.cuda import latent
+
+    gen = torch.Generator().manual_seed(20 + R)
+    wk, wv = _weights(gen)
+    a = latent.AbsorbW(wk.cuda(), wv.cuda())
+    q = torch.randn((R, H, D), generator=gen).to(torch.bfloat16).cuda()
+    ol = torch.randn((R, H, L), generator=gen).to(torch.bfloat16).cuda()
+
+    def run():
+        qa = latent.absorb_q(q, a, torch.empty((R, H, L), dtype=torch.bfloat16, device="cuda"))
+        out = latent.expand_v(ol, a, torch.empty((R, H, D), dtype=torch.bfloat16, device="cuda"))
+        return qa, out
+
+    assert R >= latent.PROMPT_ROWS
+    got = run()
+    monkeypatch.setattr(latent, "PROMPT_ROWS", 1 << 20)                       # every window in one loop, as before
+    want = run()
+    for g, w in zip(got, want):
+        assert torch.equal(g.view(torch.int16), w.view(torch.int16))
