@@ -366,6 +366,7 @@ def test_dflash2_attention_and_conv_against_torch():
         assert torch.equal(got, want), branch
 
 
+@cuda
 @pytest.mark.parametrize("np_", [512, 700, 1024, 5003, 32264])
 def test_radix_top_pools_pick_the_sorted_top_k(np_):
     """The one-kernel top-512 (radix select) keeps exactly the pools a stable descending sort keeps first, ties to
@@ -402,6 +403,7 @@ def test_radix_top_pools_pick_the_sorted_top_k(np_):
 KDA_DECODE_SHAPES = [(rows, heads) for heads in (4, 21, 22, 32) for rows in range(1, 9)]
 
 
+@cuda
 @pytest.mark.parametrize("rows,heads", [*KDA_DECODE_SHAPES, (64, 4), (300, 32), (2048, 32)])
 def test_kda_wide_chain_gives_the_fused_chains_bits(rows, heads):
     """Prompt chunks run the KDA chain as three kernels (state-independent work for all rows, the delta rule row by
@@ -432,6 +434,7 @@ def test_kda_wide_chain_gives_the_fused_chains_bits(rows, heads):
         assert torch.equal(x, y), name
 
 
+@cuda
 @pytest.mark.parametrize("wide", [False, True])
 def test_kda_conv_taps_reach_the_kernels_in_fp32(wide):
     """The KDA kernels take the conv taps in fp32 (NVIDIA's NVFP4 checkpoint stores them so): taps that bf16 cannot
