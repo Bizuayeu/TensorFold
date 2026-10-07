@@ -177,6 +177,13 @@ def test_a_prompt_starts_without_the_last_prompts_rise(zones):
         assert h.wait(lambda t: t) == waited               # a first chunk at 90 C; with the old 4 C rise, 94
 
 
+def test_a_chunk_begun_with_no_zone_read_has_no_rise(zones):
+    # a reading with no readable zone on any rank is -inf: the next chunk's rise is not infinite (a wait without end)
+    h = one_rank([float("-inf"), 90.0], zones)
+    h.start()
+    assert [h.wait(lambda t: t) for _ in range(2)] == [0.0, 0.0]
+
+
 def test_every_rank_takes_the_rise_of_the_gathered_maximum(zones):
     # the hottest rank changes between the checks: 80.6 on rank 1, then 87.6 on rank 2; the gathered rise is 7 C (each
     # rank's own is -10.6 to 8.6), so every rank waits for 86 C and leaves at 85.5 together

@@ -200,9 +200,12 @@ class GlmEngine:
         from .heat import Heat
 
         # TF_GLM_PREFILL_OVERLAP / TF_GLM_OVERLAP_PIECES / TF_GLM_PREFILL_REDUCE: every rank must make a chunk's
-        # exchanges alike; TF_GLM_HEAT_HIGH / TF_GLM_HEAT_LOW: every rank must wait on the same bands
+        # exchanges alike; TF_GLM_HEAT_HIGH / TF_GLM_HEAT_LOW / TF_GLM_HEAT_CEILING: every rank must wait on the same
+        # bands and ceiling
         self.heat = Heat.from_env()
-        bands = [round(self.heat.high * 10), round(self.heat.low * 10)] if self.heat is not None else [0, 0]
+        bands = ([round(self.heat.high * 10), round(self.heat.low * 10),
+                  round(self.heat.ceiling * 10) if self.heat.ceiling is not None else 0]
+                 if self.heat is not None else [0, 0, 0])
         mine = [int(drafter is not None), capacity, int(long_context), int(serial_only), int(LATENT),
                 prefill_rows, int(self.mtp_on), int(DRAFT_RING), KV_KINDS.index(self.kv), *map(int, overlap.settings()),
                 reduce.MODES.index(reduce.settings(comm=self.comm)), int(self.kda_wide), int(self.copy),
@@ -218,7 +221,7 @@ class GlmEngine:
                                "--vision, TF_GLM_LATENT, TF_GLM_MTP, TF_GLM_DRAFT_RING, TF_GLM_KV, "
                                "TF_GLM_PREFILL_OVERLAP, TF_GLM_OVERLAP_PIECES, TF_GLM_PREFILL_REDUCE, "
                                "TF_GLM_KDA_DECODE_WIDE, TF_GLM_COPY_DRAFTS, TF_GLM_B16_DECODE_TABLE, TF_GLM_HEAT_HIGH, "
-                               "TF_GLM_HEAT_LOW): "
+                               "TF_GLM_HEAT_LOW, TF_GLM_HEAT_CEILING): "
                                f"rank 0 {every[0][:-1]}, "
                                + ", ".join(f"rank {r} {every[r][:-1]}" for r in odd) +
                                "; pull the draft model on every machine (or pass --drafter none to all) and give all "
@@ -256,8 +259,11 @@ class GlmEngine:
                         kv=self.kv, kda_wide=self.kda_wide)
         self.e.heat = self.heat
         if rank == 0 and self.heat is not None:
+            c = self.heat.ceiling
+            over, under = ((f" or that plus the last chunk's rise is above {c:g} C",
+                            f" and that plus the rise at or below {c:g} C") if c is not None else ("", ""))
             print(f"[tensorfold] a prefill waits between chunks while any rank's hottest zone is above "
-                  f"{self.heat.high:g} C, until all are at or below {self.heat.low:g} C", flush=True)
+                  f"{self.heat.high:g} C{over}, until all are at or below {self.heat.low:g} C{under}", flush=True)
         if self.drafter is not None:
             self.drafter.capture()
         self.costs = self._calibrate()

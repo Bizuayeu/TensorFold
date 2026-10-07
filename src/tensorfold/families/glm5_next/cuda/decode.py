@@ -400,6 +400,8 @@ def prefill(e: Engine, prompt: Sequence[int], sampling: Sampling | None, *, mtp:
     last = None
     heat = getattr(e, "heat", None)
     e.heat_wait = 0.0
+    if heat is not None:
+        heat.start()                         # this prompt's first chunk has no rise
     prof.active = True
     for start in range(begin, len(prompt), e.prefill_rows):
         if heat is not None:                 # every rank, before every chunk: the same gathers on all

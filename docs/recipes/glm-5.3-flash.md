@@ -155,6 +155,12 @@ hottest of all is above HIGH, every rank waits together, reading again every 2 s
 reply's `heat_wait_s` says how long. The wait changes when chunks run, not their bits. There is no cap: a room that
 stays hot holds the request. On three DGX Sparks a 1,048,576-token prefill took one host to 94 C in six minutes.
 
+`TF_GLM_HEAT_CEILING` (degrees C, above HIGH, set only with the two; unset, off) looks one chunk ahead. Late in a
+1,048,576-token prompt one chunk heats a host by about 7 C, so a check just under HIGH can let through a chunk that
+ends well above it. With a ceiling the prefill also waits while the hottest zone plus the last chunk's rise (from the
+hottest when that chunk began; none before a prompt's first chunk) is above CEILING, and goes on once the hottest is
+at or below both LOW and CEILING less that rise.
+
 Measured on two DGX Sparks (GB10, 128 GB each) with the MLX 4-bit checkpoint, MTP drafts only,
 `--context 262144`, a synthetic codebase with one hidden fact, cold prompts:
 
