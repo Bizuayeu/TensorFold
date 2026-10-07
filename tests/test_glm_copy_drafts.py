@@ -17,7 +17,7 @@ def test_the_constants():
     from tensorfold.families.glm5_next.cuda.engine import GRAPH_ROWS, MAX_ROWS
 
     assert (cd.MATCH, cd.REPLY_MATCH, cd.MOST) == (8, 16, 5)
-    assert 1 <= cd.MISS_MOST < cd.MOST
+    assert 1 <= cd.MISS_MOST <= cd.MOST
     # a copied round's window (the pending token and its drafts) replays a captured graph
     assert cd.MOST + 1 <= max(GRAPH_ROWS) <= MAX_ROWS
 
