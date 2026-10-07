@@ -65,6 +65,7 @@ class GLMImageProcessor:
                 max_prompt_tokens: int | None = None, max_image_tokens: int | None = None) -> PreparedGLMVisionPrompt:
         if not images or max_visual_tokens < 1:
             raise ValueError("GLM image preprocessing needs images and a positive visual-token budget")
+        rendered_prompt = self.quoted_as_text(rendered_prompt)
         if rendered_prompt.count(self.image_marker) != len(images):
             raise ValueError("The rendered prompt must contain exactly one image marker for every image")
         if len(images) > max_visual_tokens:
@@ -127,6 +128,22 @@ class GLMImageProcessor:
         grid.setflags(write=False)
         return PreparedGLMVisionPrompt(token_ids, pixels, grid, tuple(spans),
                                        tuple(image.content_hash for image in images))
+
+    def quoted_as_text(self, text: str) -> str:
+        """``text`` with each image marker a conversation only quotes (a log, a pasted template) kept as text.
+
+        The chat template writes a picture as ``<|begin_of_image|><|image|><|end_of_image|>``; a bare marker outside
+        such a span is a quotation, which the tokenizer would read as the picture token and the count would refuse.
+        A zero-width space after ``<|`` keeps its characters for the model. A prompt quoting none comes back as it
+        is. After MiaAI-Lab's patch 0080 (Apache-2.0)."""
+
+        span = f"<|begin_of_image|>{self.image_marker}<|end_of_image|>"
+        if text.count(self.image_marker) == text.count(span):
+            return text
+        # cc-defer: a quoted whole span still counts as a picture (refused); Mia's per-request marks would tell it
+        # apart, if a client is seen quoting whole spans beside pictures
+        quoted = self.image_marker[:2] + "\u200b" + self.image_marker[2:]
+        return span.join(part.replace(self.image_marker, quoted) for part in text.split(span))
 
     def continued(self, prepared: PreparedGLMVisionPrompt, tokens: Sequence[int]) -> PreparedGLMVisionPrompt:
         """The same images for a prompt that goes on past ``prepared``'s tokens (text only): GLM has no positions."""

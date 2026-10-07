@@ -125,3 +125,64 @@ def test_glm_image_prompt_refuses_marker_count_and_context_overflow():
         front.prepare("no image here", [image()])
     with pytest.raises(ValueError, match="maximum context length is 5 tokens: the expanded image prompt"):
         front.prepare("<|begin_of_image|><|image|><|end_of_image|>", [image()], max_prompt_tokens=5)
+
+
+SPAN = "<|begin_of_image|><|image|><|end_of_image|>"      # what GLM's chat template writes for a picture
+
+
+def test_a_prompt_without_a_quoted_marker_expands_as_it_always_has():
+    # the token ids of a picture request that quotes no marker are pinned: the quoted-marker escape leaves them be
+    front = GLMImageProcessor(CONFIG, Processor([[1, 4, 4]]))
+    assert front.prepare(f"Q{SPAN}A", [image()]).token_ids == (81, 8, 10, 10, 10, 10, 9, 65)
+    front = GLMImageProcessor(CONFIG, Processor([[1, 4, 4], [1, 2, 4]]))
+    text = f"question{SPAN} and <|begin_of_image|> said {SPAN}"
+    parts = text.split("<|image|>")                       # the expansion before quoted markers were told apart
+    expanded = parts[0] + "".join("<|image|>" * n + rest for n, rest in zip((4, 2), parts[1:]))
+    assert front.prepare(text, [image("a"), image("b")]).token_ids == tuple(Tokenizer()(
+        expanded, add_special_tokens=False, return_attention_mask=False)["input_ids"])
+
+
+def test_a_marker_the_conversation_quotes_stays_text_beside_a_real_picture():
+    front = GLMImageProcessor(CONFIG, Processor([[1, 4, 4]]))
+    prepared = front.prepare(f"the log said <|image|> twice: <|image|>{SPAN}?", [image()])
+    assert prepared.token_ids.count(10) == prepared.visual_tokens == 4
+    assert prepared.image_spans == ((len("the log said <|\u200bimage|> twice: <|\u200bimage|>") + 1,
+                                     len("the log said <|\u200bimage|> twice: <|\u200bimage|>") + 5),)
+    with pytest.raises(ValueError, match="one image marker"):     # a quoted whole span cannot be told from a picture
+        front.prepare(f"quoted {SPAN} then {SPAN}", [image()])
+    with pytest.raises(ValueError, match="one image marker"):     # nor can a picture the template left out
+        front.prepare("only a quote <|image|>", [image()])
+
+
+def test_a_history_quoting_a_marker_with_a_picture_is_not_refused():
+    from tensorfold.server.prompts import prepare_images
+
+    pil = pytest.importorskip("PIL.Image")
+    import base64
+    import io
+
+    png = io.BytesIO()
+    pil.new("RGB", (2, 2), "red").save(png, format="PNG")
+    url = "data:image/png;base64," + base64.b64encode(png.getvalue()).decode()
+    messages = [{"role": "user", "content": "what does <|image|> in this log mean?"},
+                {"role": "assistant", "content": "It is GLM's picture token."},
+                {"role": "user", "content": [{"type": "text", "text": "and this one?"},
+                                             {"type": "image_url", "image_url": {"url": url}}]}]
+
+    def render(template):                                  # each message's text, a picture's span in its place
+        return "".join(m["content"] if isinstance(m["content"], str) else
+                       "".join(p["text"] if p["type"] == "text" else SPAN for p in m["content"]) for m in template)
+
+    rendered = prepare_images(GLMImageProcessor(CONFIG, Processor([[1, 4, 4]])), messages, render)
+    assert rendered.tokens.count(10) == rendered.vision.visual_tokens == 4
+
+
+def test_a_request_without_pictures_never_reaches_the_frontend():
+    # its prompt is the template's text tokenized as it is, a quoted marker included (both servers branch on this)
+    from tensorfold.server.prompts import has_images, prepare_prompt
+
+    messages = [{"role": "user", "content": "what does <|image|> mean?"},
+                {"role": "user", "content": [{"type": "text", "text": "<|begin_of_image|><|image|>"}]}]
+    assert not has_images(messages)
+    app = SimpleNamespace(render=lambda messages, tools, thinking: ([1, 10, 2], 3), vision=None)
+    assert prepare_prompt(app, messages, None, False, None, {}).tokens == [1, 10, 2]
