@@ -69,7 +69,7 @@ passed and what is not supported. Nemotron CUDA requires 4-bit/group-64 weights 
 unless `--no-drafts` is set. GLM on MLX reads 4-bit/group-64 weights and mlx-lm's mixed-bit conversions,
 whose 5-, 6- and 8-bit tensors take their own row kernels; it needs MLX 0.32.2 or later. GLM CUDA reads
 MLX 4-bit/group-64 weights and Brandon M. Music's experimental EXL3/TR3 checkpoint
-(`brandonmusic/GLM-5.3-Flash-tr3-4bpw`, also re-hosted as `Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw`). GLM's optional
+(`brandonmusic/GLM-5.3-Flash-tr3-4bpw`; Mia-AiLab's re-host was withdrawn in October 2026). GLM's optional
 `incoai/GLM-5.3-Flash-DFlash2` checkpoint has non-commercial license
 terms, described in [third-party notices](THIRD_PARTY_NOTICES.md).
 

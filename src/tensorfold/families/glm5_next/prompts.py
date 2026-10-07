@@ -16,7 +16,7 @@ def clear_thinking() -> bool:
 
     zai-org's GLM-5.3-Flash template defaults it to false, keeping every assistant turn's reasoning in the prompt
     (its model card: pass ``clear_thinking=true`` for chat). Checkpoints that carry the template's first revision
-    (``Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw`` among them) clear it unless told otherwise, so the reasoning before the
+    (``brandonmusic/GLM-5.3-Flash-tr3-4bpw`` among them) clear it unless told otherwise, so the reasoning before the
     last user message renders as ``<think></think>``: each new user message changes the earlier turns' tokens, and
     an agent's whole previous tool loop is prefilled again. Passing false renders those checkpoints as the current
     template does; on the current template it changes nothing."""

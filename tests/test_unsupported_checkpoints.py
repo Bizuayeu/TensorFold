@@ -157,3 +157,11 @@ def test_untested_hugging_face_checkpoints_get_a_note(capsys):
     for model in ("owner/tested", "owner/drafter", "/local/folder"):
         cli._note_untested(family, model)
         assert capsys.readouterr().out == ""
+
+
+def test_glm_s_exl3_checkpoint_is_tested_under_its_original_id_and_its_withdrawn_re_host(capsys):
+    # Mia-AiLab's re-host left Hugging Face in October 2026; a copy pulled under it is the same checkpoint
+    family = families.families()["glm5_next"]
+    for model in ("brandonmusic/GLM-5.3-Flash-tr3-4bpw", "Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw"):
+        cli._note_untested(family, model)
+        assert capsys.readouterr().out == ""
