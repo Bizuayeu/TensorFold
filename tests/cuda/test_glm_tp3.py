@@ -511,7 +511,7 @@ def test_a_rank_reducing_otherwise_is_named(checkpoints, monkeypatch):
         odd.on = r == 2
         GlmEngine(checkpoints["mlx"], rank=r, master="", port=0, world=3, comm=comm, graphs=False)
 
-    with pytest.raises(RuntimeError, match=r"different settings.*TF_GLM_HEAT_LOW\): rank 0 \[.*\], rank 2 \["):
+    with pytest.raises(RuntimeError, match=r"different settings.*TF_GLM_HEAT_CEILING\): rank 0 \[.*\], rank 2 \["):
         run_ranks(start, 3)
 
 
@@ -593,7 +593,29 @@ def test_a_rank_waiting_on_other_heat_bands_is_named(checkpoints, monkeypatch, t
         odd.on = r == 1
         GlmEngine(checkpoints["mlx"], rank=r, master="", port=0, world=3, comm=comm, graphs=False)
 
-    with pytest.raises(RuntimeError, match=r"different settings.*TF_GLM_HEAT_LOW\): rank 0 \[.*\], rank 1 \["):
+    with pytest.raises(RuntimeError, match=r"different settings.*TF_GLM_HEAT_CEILING\): rank 0 \[.*\], rank 1 \["):
+        run_ranks(start, 3)
+
+
+def test_a_rank_waiting_under_another_heat_ceiling_is_named(checkpoints, monkeypatch, tmp_path):
+    """TF_GLM_HEAT_CEILING on rank 1 only, every rank at the same HIGH / LOW, is refused at startup: every rank must
+    wait on the same rises."""
+
+    import threading
+
+    from tensorfold.families.glm5_next.cuda import heat
+    from tensorfold.families.glm5_next.cuda.engine import GlmEngine
+
+    (tmp_path / "zone0").write_text("50000\n")
+    odd = threading.local()
+    monkeypatch.setattr(heat.Heat, "from_env", classmethod(
+        lambda cls, env=None: cls(92, 88, str(tmp_path / "zone*"), ceiling=93 if getattr(odd, "on", False) else None)))
+
+    def start(r, comm):
+        odd.on = r == 1
+        GlmEngine(checkpoints["mlx"], rank=r, master="", port=0, world=3, comm=comm, graphs=False)
+
+    with pytest.raises(RuntimeError, match=r"different settings.*TF_GLM_HEAT_CEILING\): rank 0 \[.*\], rank 1 \["):
         run_ranks(start, 3)
 
 
