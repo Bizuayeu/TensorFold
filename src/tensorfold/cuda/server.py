@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import os
 import threading
 import time
 import uuid
@@ -22,6 +23,7 @@ from tensorfold.server.thinking_notes import unanswered
 from tensorfold.server.token_routes import flag, token_ids
 from tensorfold.server.tool_policy import ToolCallPolicy
 from tensorfold.engine.call_gate import CallGate, ThinkBudget, call_format, generate_gated
+from tensorfold.engine.loop_guard import LoopGuard
 from tensorfold.engine.tool_draft import ToolCallStreamer
 from tensorfold.server.tools import active_tool_specs, tool_choice_requires_call
 
@@ -491,9 +493,12 @@ class App:
             options["probabilities"] = probabilities
         if takes_stop_eos:
             options["stop_eos"] = not prepared.ignore_eos
-        shaped = prepared.grammar is not None or prepared.think_budget > 0
+        # TF_GLM_LOOP_GUARD=1: a think block that collapsed into repeating itself is closed (engine/loop_guard.py)
+        guarded = chat and thinking and os.environ.get("TF_GLM_LOOP_GUARD", "0") == "1"
+        shaped = prepared.grammar is not None or prepared.think_budget > 0 or guarded
         think_end = self.tok.token_to_id("</think>") if chat and thinking and shaped else None
         budget = self._think_budget(prepared, think_end)
+        guard = LoopGuard(self._think_close(prepared, think_end), think_end) if guarded and think_end is not None else None
         # priority "background" (or a session-title request): after the others, as on the Mac
         background = body.get("priority") == "background" or (chat and is_title_request(body.get("messages"), tools))
         concurrent = getattr(self.engine, "concurrent", False)
@@ -502,7 +507,7 @@ class App:
             options["background"] = True            # the engine's scheduler orders its lanes and prompts
         # one engine at a time: a background reply yields between rounds (not on two ranks, which decode to the end)
         yielding = background and turns is not None and getattr(self.engine, "tp", 1) == 1
-        gates = [g for g in (gate, budget, Yield(turns) if yielding else None) if g is not None]
+        gates = [g for g in (gate, budget, guard, Yield(turns) if yielding else None) if g is not None]
 
         cached: list[int] = []              # the prompt tokens the first run found cached (usage's cached_tokens)
         prompt_rows = None
@@ -555,6 +560,8 @@ class App:
         if stopped["client"]:                                        # as the Mac server: nothing more is written
             raise RequestCancelled("the client left during the reply")
         stats = {**(stats or {}), "token_sha": token_sha(out)}
+        if guard is not None and guard.fires:
+            stats["loop_guard"] = guard.fires               # the think block collapsed and was closed
         # GLM: the model's end token (not a stop string or the token limit) ended the reply inside a call, before its
         # </tool_call>: the call is closed and sent when it then parses whole; otherwise its markup stays the text
         if tools and out and out[-1] in ends and not stopped["stop"] and self._glm_calls():
@@ -613,10 +620,16 @@ class App:
 
         if prepared.think_budget <= 0 or think_end is None:
             return None
+        return ThinkBudget(prepared.think_budget, self._think_close(prepared, think_end), think_end)
+
+    def _think_close(self, prepared: PreparedRequest, think_end: int) -> list[int]:
+        """The tokens that close a think block the server ends: a newline, </think> and a blank line (</think> alone
+        under a grammar)."""
+
         close = [*self.tok.encode("\n", add_special_tokens=False).ids, think_end]
         if prepared.grammar is None:
             close += self.tok.encode("\n\n", add_special_tokens=False).ids
-        return ThinkBudget(prepared.think_budget, close, think_end)
+        return close
 
     def _call_gate(self, prompt: list[int], tools: list[dict[str, Any]]) -> CallGate:
         """The gate a required tool call needs, from this template's call markup and the rendered prompt."""
