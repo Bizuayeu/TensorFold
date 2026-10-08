@@ -106,6 +106,23 @@ def without_mtp(transform, layers: int):
     return lambda name, info: (0, 0) if name.startswith(prefix) else transform(name, info)
 
 
+def different_settings(names: list[str], rows: list[list[int]]) -> str | None:
+    """The refusal when the ranks' startup settings (``rows``, one a rank, valued in ``names``' order) differ: each
+    setting that differs, by name, with rank 0's value and every other rank's that differs; None when all agree."""
+
+    first = rows[0]
+    odd = [r for r, row in enumerate(rows) if row != first]
+    if not odd:
+        return None
+    named = [f"{name} {first[i]} on rank 0, " + ", ".join(f"{rows[r][i]} on rank {r}" for r in odd
+                                                         if rows[r][i] != first[i])
+             for i, name in enumerate(names) if any(rows[r][i] != first[i] for r in odd)]
+    return (f"the ranks were started with different settings ({'; '.join(named)}): rank 0 {first}, "
+            + ", ".join(f"rank {r} {rows[r]}" for r in odd) +
+            "; pull the draft model on every machine (or pass --drafter none to all) and give all the same flags and "
+            "checkpoint")
+
+
 class GlmEngine:
     """GLM-5.3-Flash on ``world`` ranks (this one ``rank``): weights, MTP and DFlash2 drafting, per-request policies."""
 
@@ -207,27 +224,28 @@ class GlmEngine:
         bands = ([round(self.heat.high * 10), round(self.heat.low * 10),
                   round(self.heat.ceiling * 10) if self.heat.ceiling is not None else 0]
                  if self.heat is not None else [0, 0, 0])
-        mine = [int(drafter is not None), capacity, int(long_context), int(serial_only), int(LATENT),
-                prefill_rows, int(self.mtp_on), int(DRAFT_RING), KV_KINDS.index(self.kv), *map(int, overlap.settings()),
-                reduce.MODES.index(reduce.settings(comm=self.comm)), int(self.kda_wide), int(self.copy),
-                int(self.b16_table), *bands, int(vision),
-                nvfp4_attention(headers(model_dir, rank=rank))]     # the checkpoint: pinned or attention NVFP4
+        # (name, value) in the order every rank gathers them; the refusal names the ones that differ
+        settings = [("draft model", int(drafter is not None)), ("the context's cache slots", capacity),
+                    ("a context past the dense limit", int(long_context)), ("--no-drafts", int(serial_only)),
+                    ("TF_GLM_LATENT", int(LATENT)), ("prefill rows", prefill_rows), ("TF_GLM_MTP", int(self.mtp_on)),
+                    ("TF_GLM_DRAFT_RING", int(DRAFT_RING)), ("TF_GLM_KV", KV_KINDS.index(self.kv)),
+                    *zip(("TF_GLM_PREFILL_OVERLAP", "TF_GLM_OVERLAP_PIECES"), map(int, overlap.settings())),
+                    ("TF_GLM_PREFILL_REDUCE", reduce.MODES.index(reduce.settings(comm=self.comm))),
+                    ("TF_GLM_KDA_DECODE_WIDE", int(self.kda_wide)), ("TF_GLM_COPY_DRAFTS", int(self.copy)),
+                    ("TF_GLM_B16_DECODE_TABLE", int(self.b16_table)),
+                    *zip(("TF_GLM_HEAT_HIGH", "TF_GLM_HEAT_LOW", "TF_GLM_HEAT_CEILING"), bands),
+                    ("--vision", int(vision)),
+                    # the checkpoint: pinned or attention NVFP4
+                    ("the checkpoint's NVFP4 attention", nvfp4_attention(headers(model_dir, rank=rank)))]
+        mine = [value for _, value in settings]
         # other conversations' kept prompts get what the window leaves, at most TF_GLM_CACHE_GIB, the same on every rank
         plan = self.capacity_plan
         wanted = int(float(os.environ.get("TF_GLM_CACHE_GIB", "3")) * 2 ** 30)
         spare = max(0, min(wanted, plan["budget_bytes"] - plan["total_bytes_estimate"]))
         every = self._gather_ints(mine + [spare >> 20])
-        odd = [r for r, row in enumerate(every) if row[:-1] != every[0][:-1]]
-        if odd:
-            raise RuntimeError("the ranks were started with different settings (the checkpoint's NVFP4 attention, "
-                               "draft model, context, drafts, --vision, TF_GLM_LATENT, TF_GLM_MTP, TF_GLM_DRAFT_RING, "
-                               "TF_GLM_KV, TF_GLM_PREFILL_OVERLAP, TF_GLM_OVERLAP_PIECES, TF_GLM_PREFILL_REDUCE, "
-                               "TF_GLM_KDA_DECODE_WIDE, TF_GLM_COPY_DRAFTS, TF_GLM_B16_DECODE_TABLE, TF_GLM_HEAT_HIGH, "
-                               "TF_GLM_HEAT_LOW, TF_GLM_HEAT_CEILING): "
-                               f"rank 0 {every[0][:-1]}, "
-                               + ", ".join(f"rank {r} {every[r][:-1]}" for r in odd) +
-                               "; pull the draft model on every machine (or pass --drafter none to all) and give all "
-                               "the same flags and checkpoint")
+        refusal = different_settings([name for name, _ in settings], [row[:-1] for row in every])
+        if refusal:
+            raise RuntimeError(refusal)
         self.cache_bytes = min(row[-1] for row in every) << 20
         plan["kept_bytes"] = self.cache_bytes
         for key in ("serving_peak_bytes_estimate", "total_bytes_estimate"):
