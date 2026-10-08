@@ -165,3 +165,11 @@ def test_glm_s_exl3_checkpoint_is_tested_under_its_original_id_and_its_withdrawn
     for model in ("brandonmusic/GLM-5.3-Flash-tr3-4bpw", "Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw"):
         cli._note_untested(family, model)
         assert capsys.readouterr().out == ""
+
+
+def test_glm_s_nvfp4_checkpoints_are_tested(capsys):
+    # NVIDIA's ModelOpt NVFP4 checkpoint and its re-pack with W4A16 attention and head, which the CUDA engine reads
+    family = families.families()["glm5_next"]
+    for model in ("nvidia/GLM-5.3-Flash-NVFP4", "Bizuayeu/GLM-5.3-Flash-NVFP4-attn-lmhead-W4A16"):
+        cli._note_untested(family, model)
+        assert capsys.readouterr().out == ""

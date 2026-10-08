@@ -8,10 +8,13 @@ from typing import Any
 MODEL_TYPES = ("glm5_next",)
 TITLE = "GLM-5.3-Flash"
 LANES = True
-# 4-bit weights in groups of 64 with the MTP layer kept; the EXL3 checkpoint is the CUDA engine's alone. The last is
-# Mia-AiLab's byte-identical re-host of the EXL3 one, withdrawn in October 2026: kept for copies pulled under it
+# 4-bit weights in groups of 64 with the MTP layer kept; the EXL3 checkpoint is the CUDA engine's alone. The third is
+# Mia-AiLab's byte-identical re-host of the EXL3 one, withdrawn in October 2026: kept for copies pulled under it. The
+# last two are the CUDA engine's ModelOpt NVFP4 checkpoints: NVIDIA's, and its re-pack with the attention projections
+# and the head in W4A16 NVFP4 (docs/recipes/glm-5.3-flash.md)
 MODELS = ("TensorFold/GLM-5.3-Flash-MLX-4bit-MTP", "brandonmusic/GLM-5.3-Flash-tr3-4bpw",
-          "Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw")
+          "Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw", "nvidia/GLM-5.3-Flash-NVFP4",
+          "Bizuayeu/GLM-5.3-Flash-NVFP4-attn-lmhead-W4A16")
 DRAFTER = "incoai/GLM-5.3-Flash-DFlash2"   # the CUDA engine's optional draft model; the Mac engine drafts with MTP
 KERNEL_PACKAGE = "tensorfold.kernels.glm.flash.v1"
 # the prompt experts' sorted gather (Flash Next's prompt matmuls), hashed into snapshot keys
