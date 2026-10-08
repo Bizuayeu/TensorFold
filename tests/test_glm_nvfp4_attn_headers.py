@@ -169,7 +169,9 @@ def test_the_family_reads_the_mixed_precision_config(tmp_path, monkeypatch):
     fp8 = {**config, "quantization_config": {**q, "quantized_layers": {**q["quantized_layers"],
                                                                          "lm_head": {"quant_algo": "FP8"}}}}
     (tmp_path / "config.json").write_text(json.dumps(fp8))
-    with pytest.raises(ValueError, match="FP8"):
+    # the refusal names the layers' algos as written, sorted
+    algos = ", ".join(sorted({v["quant_algo"] for v in fp8["quantization_config"]["quantized_layers"].values()}))
+    with pytest.raises(ValueError, match=re.escape(f"this one is ModelOpt {q['quant_algo']} of {algos} on CUDA")):
         glm5_next.check(tmp_path)
     monkeypatch.setattr(sys, "platform", "darwin")
     with pytest.raises(ValueError, match="CUDA engine only"):

@@ -31,6 +31,12 @@ MLX_ENV = {"MLX_MAX_OPS_PER_BUFFER": "200", "MLX_MAX_MB_PER_BUFFER": "200", "MLX
 MODELOPT_ALGOS = {"NVFP4", "W4A16_NVFP4"}    # ModelOpt layer algos the CUDA engine reads (W4A16: no input scale)
 
 
+def layer_algos(found: dict) -> set[str]:
+    """The quant_algo of each layer a ModelOpt MIXED_PRECISION block lists, as written."""
+
+    return {str(v.get("quant_algo", "")) for v in (found.get("quantized_layers") or {}).values()}
+
+
 def modelopt_nvfp4(found: dict) -> bool:
     """Whether a ModelOpt quantization block is NVFP4, or MIXED_PRECISION whose layers are all NVFP4 or W4A16_NVFP4
     (attention and the head re-packed weight-only beside NVFP4 experts)."""
@@ -38,7 +44,7 @@ def modelopt_nvfp4(found: dict) -> bool:
     algo = str(found.get("quant_algo") or "").upper()
     if algo != "MIXED_PRECISION":
         return algo == "NVFP4"
-    layers = {str(v.get("quant_algo", "")).upper() for v in (found.get("quantized_layers") or {}).values()}
+    layers = {a.upper() for a in layer_algos(found)}
     return bool(layers) and layers <= MODELOPT_ALGOS
 
 
@@ -88,8 +94,7 @@ def check(model_dir: str | Path) -> None:
         if not modelopt_nvfp4(found) or sys.platform == "darwin":
             where = "a Mac" if sys.platform == "darwin" else "CUDA"
             if algo.upper() == "MIXED_PRECISION":
-                algo += " of " + ", ".join(sorted({str(v.get("quant_algo", "")) for v in
-                                                   (found.get("quantized_layers") or {}).values()}))
+                algo += " of " + ", ".join(sorted(layer_algos(found)))
             raise ValueError("GLM-5.3-Flash reads ModelOpt NVFP4 checkpoints (nvidia/GLM-5.3-Flash-NVFP4's layout, "
                              "or MIXED_PRECISION of its NVFP4 with W4A16_NVFP4 attention and head) on its CUDA engine "
                              f"only; this one is ModelOpt {algo or 'without quant_algo'} on {where}. {OWN_MODEL_HELP}")
