@@ -86,7 +86,8 @@ GLM's copy drafts (`families/glm5_next/cuda/copy_drafts.py` and their rounds in 
 `drafter_choice.auto_decode`, `TF_GLM_COPY_DRAFTS`) are ported from MiaAI-Lab's GLM-5.3-Flash-EXL3-2x-DGX-Sparks-TensorFold,
 patch 0007-glm-copy-drafts and the reply_match and miss_most parts of patch 0032-glm-code-copy-drafts, Apache License
 2.0 (`LICENSES/Apache-2.0.txt`): the search of the context's last 8 tokens, the latest-occurrence rule, 16 tokens for
-an occurrence inside the reply, fewer drafts after a missed copied round, and a copied round's MTP absorb. Rewritten
+an occurrence inside the reply, a cap on the drafts after a missed copied round (`MISS_MOST`, which this tree
+sets to the round's most, so no fewer), and a copied round's MTP absorb. Rewritten
 for this tree's 8-row windows with constants in place of their settings; 0032's padding to 16-row windows is not taken.
 
 GLM's pieced prompt exchanges (`families/glm5_next/cuda/overlap.py`, `TF_GLM_PREFILL_OVERLAP`) follow the idea of
@@ -109,6 +110,12 @@ tree; the reduce-scatter goes by rows of uneven shares over grouped point-to-poi
 sends the sums as bf16, and NCCL's own reduce-scatter is not used.
 A doorbell key per follower (`GlmEngine._bell_key`) is the fix MiaAI-Lab's patch 0066-glm-tp-n makes for the same
 wait; no code is taken from it.
+
+GLM's image prompts (`vision/glm_processing.py`) keep an `<|image|>` the conversation quotes, outside a
+`<|begin_of_image|>...<|end_of_image|>` span, as text beside the real pictures, after MiaAI-Lab's patch
+0080-vision-quoted-markers for GLM-5.3-Flash-EXL3-2x-DGX-Sparks-TensorFold (PR #64, Apache License 2.0,
+`LICENSES/Apache-2.0.txt`). No code is taken: Mia tells the template's markers apart by per-request marks, this
+tree by the span.
 
 ## Vendored code and weights
 
