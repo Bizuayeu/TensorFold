@@ -76,7 +76,10 @@ def test_a_reply_occurrence_without_sixteen_tokens_before_its_end_is_skipped():
     assert drafts(PROMPT[:8] + loop + loop[:8], prompt=8).propose() == []
 
 
-def test_after_a_missed_copy_round_fewer_drafts_until_one_keeps_all():
+def test_after_a_missed_copy_round_miss_most_drafts_until_one_keeps_all(monkeypatch):
+    """MISS_MOST is MOST, so a miss cuts nothing; set below it, the copies after a miss propose that many."""
+
+    monkeypatch.setattr(cd, "MISS_MOST", 3)
     tail = list(range(500, 508))
     run = list(range(600, 640))
     c = drafts(tail + run + tail, prompt=len(tail) + len(run) + len(tail))
@@ -84,8 +87,8 @@ def test_after_a_missed_copy_round_fewer_drafts_until_one_keeps_all():
     c.extend(run[:5])                    # kept 4 of the 5 drafts and the sample after them: a miss
     assert c.missed
     c.extend(tail)                       # an MTP round between (no proposal): the miss stands
-    assert c.propose() == run[:cd.MISS_MOST]
-    c.extend(run[:cd.MISS_MOST + 1])     # every draft kept, and the sample after them
+    assert c.propose() == run[:3]
+    c.extend(run[:4])                    # every draft kept, and the sample after them
     assert not c.missed
     c.extend(tail)
     assert len(c.propose()) == cd.MOST

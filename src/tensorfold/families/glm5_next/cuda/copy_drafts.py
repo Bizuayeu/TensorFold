@@ -25,7 +25,7 @@ MOST = 5           # drafts a round: the window (6 rows) stays within the captur
 # and on two loads whose copies miss often, a rename of the edit passage (10% of the copied drafts missed) and unit
 # tests for it (41%): 5 was 1.0% faster on edits and renames and the same on the tests, the same tokens; 3 helped
 # none of them. Kept as a constant for a load where cutting pays.
-MISS_MOST = 5      # drafts a copied round after one that missed
+MISS_MOST = MOST   # drafts a copied round after one that missed
 
 
 def enabled(env=None) -> bool:
