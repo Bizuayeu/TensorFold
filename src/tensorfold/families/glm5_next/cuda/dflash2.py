@@ -150,7 +150,8 @@ def _quantize4(w: torch.Tensor) -> qmm.Q4:
     return qmm.quantize4(w)
 
 
-def _mm(x: torch.Tensor, w: qmm.Q4, xs: torch.Tensor | None = None, *, f32: bool = False) -> torch.Tensor:
+def _mm(x: torch.Tensor, w: qmm.Q4 | qmm.B16 | Fp4Linear, xs: torch.Tensor | None = None, *,
+        f32: bool = False) -> torch.Tensor:
     if isinstance(w, Fp4Linear):                 # the model's NVFP4 head (W4A16), which drafts read as it is
         return w(x, f32=f32)
     return qmm.matmul(x, w, xs, f32=f32)

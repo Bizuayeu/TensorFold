@@ -42,7 +42,7 @@ def _checkpoint(path, exl3: bool = False, mtp: bool = True, nvfp4: bool = False,
                 heads: int = 2, lin_heads: int = 2, moe_width: int = MOE, dense_width: int = 256,
                 vocab: int = V) -> None:
     """The synthetic model as an MLX 4-bit checkpoint, or with ``exl3`` as an EXL3 one: routed experts as trellis
-    tiles with their scales, every other weight BF16 (the layout of Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw); with
+    tiles with their scales, every other weight BF16 (the layout of brandonmusic/GLM-5.3-Flash-tr3-4bpw); with
     ``nvfp4`` as a ModelOpt NVFP4 one (nvidia/GLM-5.3-Flash-NVFP4's layout): routed experts and the dense MLP as e2m1
     codes, e4m3 scales per 16 inputs and fp32 weight and input scales, the MTP layer and every other weight BF16.
     ``attention`` (with ``nvfp4``): the attention projections and lm_head too, W4A16 NVFP4 under quant_algo
