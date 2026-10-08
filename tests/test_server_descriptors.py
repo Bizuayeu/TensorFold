@@ -40,6 +40,9 @@ def test_an_accept_refused_for_want_of_descriptors_is_said_once_a_run():
         "from tensorfold.server.http import Server\n"
         "server = Server(('127.0.0.1', 0), lambda *args: None)\n"
         "server.timeout = 2\n"
+        # each request handled and its socket closed before handle_request returns: closed later, on
+        # the server's worker thread, it can free a descriptor below the limit the next squeeze() set
+        "server.process_request = lambda request, address: (server.finish_request(request, address), server.shutdown_request(request))\n"
         "clients = [socket.create_connection(server.server_address) for _ in range(3)]\n"
         "_, hard = resource.getrlimit(resource.RLIMIT_NOFILE)\n"
         "def squeeze():\n"
