@@ -6,7 +6,9 @@ import torch
 import triton
 import triton.language as tl
 
-from . import LATENT as ENABLED     # off (TF_GLM_LATENT=0): per-head keys and values, 0.3.5's path, for A/B
+from tensorfold.cuda.nvfp4 import format as nvfp4_format
+
+from . import LATENT as ENABLED    # off (TF_GLM_LATENT=0): per-head keys and values, 0.3.5's path, for A/B
 from . import kv8                   # TF_GLM_KV=fp8: e4m3 rows with a power-of-two scale each (the kernels' FP8)
 
 L = 512            # GLM-5.3-Flash's latent width (kv_lora_rank); the kernels take the width from the tensors
@@ -35,15 +37,12 @@ def dequant_mlx4(w: torch.Tensor, s: torch.Tensor, b: torch.Tensor, group: int =
     return q * s + b
 
 
-E2M1 = (0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0)        # an NVFP4 code's magnitude (bit 3: the sign)
-
-
 def dequant_nvfp4(w: torch.Tensor, s: torch.Tensor, scale: float) -> torch.Tensor:
     """NVFP4 rows -> fp32 [out, in]: w uint8 [out, in / 2], low nibble first; s e4m3 [out, in / 16]; ``scale`` the
     fp32 weight scale. A code times its e4m3 scale is exact in fp32, the weight scale one rounding after it
     (``nvfp4.format.dequant``'s order)."""
 
-    mags = torch.tensor(E2M1 + tuple(-v for v in E2M1), dtype=torch.float32, device=w.device)
+    mags = torch.from_numpy(nvfp4_format.E2M1).to(w.device)     # an NVFP4 code's value (bit 3: the sign)
     w = w.view(torch.uint8)
     codes = torch.stack((w & 0xF, w >> 4), dim=-1).reshape(w.shape[0], -1).long()
     s = s.view(torch.float8_e4m3fn).float().repeat_interleave(16, dim=1)
