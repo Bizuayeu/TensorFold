@@ -35,10 +35,7 @@ the checkpoint you name; it picks none by itself.
 | Nemotron 3.5 Lightning | not read yet | not read yet | one or two ranks |
 
 Mia-AiLab's checkpoints on Hugging Face (30 Sep 2026):
-- Loaded and served here: `Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw` (two Sparks; a byte-identical re-host of Brandon M.
-  Music's `brandonmusic/GLM-5.3-Flash-tr3-4bpw`, under his ShapleyMCG License 1.0, withdrawn in October 2026: pull
-  the original) and
-  `Mia-AiLab/Qwen3.8-Flash-Next-NVFP4` (found by its `model_type`, `qwen3_8_flash_next`).
+- Loaded and served here: `Mia-AiLab/Qwen3.8-Flash-Next-NVFP4` (found by its `model_type`, `qwen3_8_flash_next`).
 - Not tried yet: `Mia-AiLab/Qwen3.8-27B-EXL3`, `Mia-AiLab/Qwen3.8-27B-EXL3-2.0bpw`,
   `Mia-AiLab/Qwen3.8-27B-EXL3-3.5bpw`, `Mia-AiLab/Qwen3.8-27B-DFlash2-EXL3-5.0bpw` (a drafter),
   `Mia-AiLab/DeepSeek-V4.1-Flash-EXL3-2.9bpw` and `-3.0bpw` (DeepSeek-V4 has no CUDA engine yet).

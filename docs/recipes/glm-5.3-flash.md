@@ -44,8 +44,9 @@ mcg-codebook routed experts with BF16 weights elsewhere, not arbitrary EXL3 layo
 two-rank command above, substituting its checkpoint ID on both ranks. With DFlash2 available, the EXL3
 `auto` policy uses DFlash2; without it, MTP remains available.
 
-The expert decoder and BF16 target matmul keep row arithmetic fixed. A quantized copy of the head may
-propose drafts, but target verification retains the BF16 head. EXL3 speed, capacity and long-context
+The expert decoder and BF16 target matmul keep row arithmetic fixed. A 4-bit copy of the BF16 head may
+propose drafts, but target verification retains the BF16 head (as with `nvidia/GLM-5.3-Flash-NVFP4`; an NVFP4 head
+drafts itself, [NVFP4](#nvfp4)). EXL3 speed, capacity and long-context
 qualification are TBD [release-0.3.5].
 
 ### NVFP4
@@ -61,7 +62,17 @@ verification never reads them, so replies are unchanged. The BF16 visual tower i
 ([vision](../vision.md)). The startup estimate is about 91 GiB of weights a rank without it. On two DGX Sparks (GB10,
 128 GB each) with MTP drafts only, `--context 0` allocated a 334,264- to 357,585-token window, short prompts decoded at
 29.6 / 27.8 / 33.8 / 27.6 tok/s (code and chat, sampled and greedy, 64 tokens, median of 5 seeds), and drafted replies
-equaled `"draft": false` ones (15 of 15, prompts of 14 to 32,762 tokens). Long-context qualification is TBD.
+equaled `"draft": false` ones (15 of 15, prompts of 14 to 32,762 tokens). For long prompts, see
+[Long contexts](#long-contexts-the-latent-cache).
+
+`Bizuayeu/GLM-5.3-Flash-NVFP4-attn-lmhead-W4A16` is that checkpoint with its attention projections and `lm_head`
+re-packed as W4A16 NVFP4: ModelOpt `MIXED_PRECISION` of `NVFP4` layers and `W4A16_NVFP4` ones (no input scale). Every
+KDA and DSA projection of the decoder layers is NVFP4 but the indexer's `wk` and `weights_proj`; the MTP layer stays
+BF16. The engine reads a projection as NVFP4 on bf16 rows wherever the checkpoint stores its scales. The projections
+KDA and DSA run as one matmul stay one, stacked under their shared weight scale (a stack whose weight scales differ is
+refused), and the latent path dequantizes `kv_b_proj` to its BF16 copy at load. The NVFP4 head, cut to the rank's
+share of the vocabulary, drafts as well as verifies: no 4-bit copy is made beside it. At startup the ranks compare how
+many NVFP4 projections outside the MLPs their checkpoint holds, so ranks started on the two checkpoints are refused.
 
 ### Draft policies
 
