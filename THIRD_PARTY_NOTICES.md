@@ -96,9 +96,7 @@ MiaAI-Lab's patches 0010-glm-hc-split and 0033-glm-prefill-overlap2 for TensorFo
 No code is taken; this tree keeps the all-gather and pieces it by rows. Each rank gluing only its own rows of a
 reduce-scattered chunk and sending them to the others (`reduce.owned` and `reduce.share`,
 `TF_GLM_PREFILL_REDUCE=split`) follows the row split of their patch 0010, with shares of uneven size after their
-patches 0067 and 0068 (a 2,048-row chunk at three ranks had run unsplit); no code is taken from them either. The
-prompt pool scores' rows per program (`sparse.SCORE_RB`) follow their patch 0009-glm-prefill-kernels, whose default is
-4; this tree uses 16.
+patches 0067 and 0068 (a 2,048-row chunk at three ranks had run unsplit); no code is taken from them either.
 
 GLM on three ranks takes three things from ashhart/TensorFold PR #159 (full GLM-5.3 on four ranks, by drowzeys,
 under this repository's Apache License 2.0; read at the PR head `befd47d`, from its commits `7779fe0` and `028698c`):
@@ -121,6 +119,11 @@ The Responses API accepts OpenAI's `include` values and ignores them, refusing a
 (`server/responses_translate.py`), after MiaAI-Lab's patch 0093-responses-include for
 GLM-5.3-Flash-EXL3-2x-DGX-Sparks-TensorFold (Apache License 2.0, `LICENSES/Apache-2.0.txt`), rewritten here without
 its once-a-value log line.
+
+A prompt chunk's pool scores take one row and 32 pool blocks a program, the row's index queries and head weights
+loaded once for its blocks (`sparse._scores`, `sparse.SCORE_LOOP`), after MiaAI-Lab's patch 0086-glm-prompt-scores-loop
+for GLM-5.3-Flash-EXL3-2x-DGX-Sparks-TensorFold (Apache License 2.0, `LICENSES/Apache-2.0.txt`), rewritten here for
+this tree's FP8 pooled keys and scored columns; decode windows keep one block a program.
 
 ## Vendored code and weights
 

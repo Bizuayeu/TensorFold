@@ -171,15 +171,13 @@ def test_select_tokens_vectorized_equals_loop(pos, R):
     tokens, counts = sparse.select_tokens(qi, wts, pk, pos, R, npool_max - 2, pos_dev)
     # the same pool choice the function made, fed to the reference loop
     scores = torch.empty((R, npool_max - 2), dtype=torch.float32, device="cuda")
-    sparse._scores[(R, -(-(npool_max - 2) // 64))](qi, wts, wts.stride(0), pk, scores, pos_dev, R, npool_max - 2,
-                                                    128 ** -0.5, 1.0 / 5.656854249492381, H=32, HP=32, D=128, BP=64,
-                                                    RB=1, num_warps=4)
-    blocked = torch.empty_like(scores)
-    sparse._scores[(-(-R // 16), -(-(npool_max - 2) // 64))](qi, wts, wts.stride(0), pk, blocked, pos_dev, R,
-                                                              npool_max - 2, 128 ** -0.5, 1.0 / 5.656854249492381, H=32,
-                                                              HP=32, D=128, BP=64, RB=16,
-                                                              num_warps=4)
-    assert torch.equal(scores, blocked), "row-blocked scores differ from one row a program"
+    nb = -(-(npool_max - 2) // 64)
+    sparse._scores[(R, nb)](qi, wts, wts.stride(0), pk, scores, pos_dev, npool_max - 2, nb, 128 ** -0.5,
+                            1.0 / 5.656854249492381, H=32, HP=32, D=128, BP=64, L=1, num_warps=4)
+    looped = torch.empty_like(scores)
+    sparse._scores[(R, -(-nb // 32))](qi, wts, wts.stride(0), pk, looped, pos_dev, npool_max - 2, nb, 128 ** -0.5,
+                                      1.0 / 5.656854249492381, H=32, HP=32, D=128, BP=64, L=32, num_warps=4)
+    assert torch.equal(scores, looped), "looped scores differ from one block a program"
     order = torch.sort(scores, dim=1, descending=True, stable=True).indices[:, :512]
     pools = torch.sort(order, dim=1).values.cpu()
     want_t, want_c = _select_tokens_loop(pools, pos, R)

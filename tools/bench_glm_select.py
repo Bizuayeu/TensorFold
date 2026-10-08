@@ -1,5 +1,5 @@
 """Time GLM-5.3-Flash's DSA token selection for one prefill chunk deep in a long context: the pool scores kernel
-at several row blocks (checking each gives RB=1's bits) and the top-512 ranking.
+at several pool blocks a program (checking each gives L=1's bits) and the top-512 ranking.
 
     python tools/bench_glm_select.py --pos 126976 --rows 2048
 """
@@ -43,16 +43,17 @@ def main() -> None:
     np_b = sparse.pool_bucket(a.pos, R, npool_cap)
     print(f"rows {R} at position {a.pos}: {(a.pos + R) // 4} visible pools, bucket {np_b}")
     ref = None
-    for rb in (1, 2, 4, 8, 16):
+    nb = triton.cdiv(np_b, 64)
+    for loop in (1, 4, 8, 16, 32):
         scores = torch.empty((R, np_b), dtype=torch.float32, device=dev)
-        fn = lambda: sparse._scores[(triton.cdiv(R, rb), triton.cdiv(np_b, 64))](
-            qi, wts, wts.stride(0), pk, scores, pos_dev, R, np_b, D ** -0.5, 1.0 / 5.656854249492381,
-            H=H, HP=32, D=D, BP=64, RB=rb, num_warps=4)
+        fn = lambda: sparse._scores[(R, triton.cdiv(nb, loop))](
+            qi, wts, wts.stride(0), pk, scores, pos_dev, np_b, nb, D ** -0.5, 1.0 / 5.656854249492381,
+            H=H, HP=32, D=D, BP=64, L=loop, num_warps=4)
         ms = timed(fn, a.reps)
         if ref is None:
             ref = scores.clone()
         same = torch.equal(scores, ref)
-        print(f"scores RB {rb:2d}: {ms:7.2f} ms  {'same bits' if same else 'BITS DIFFER'}")
+        print(f"scores L {loop:2d}: {ms:7.2f} ms  {'same bits' if same else 'BITS DIFFER'}")
     ms = timed(lambda: sparse._top_pools(ref, sparse.TOPK_POOLS), a.reps)
     print(f"top 512 pools, torch: {ms:7.2f} ms")
     ms = timed(lambda: sparse.top_pools(ref, sparse.TOPK_POOLS), a.reps)

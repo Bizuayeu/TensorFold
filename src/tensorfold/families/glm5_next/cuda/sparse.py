@@ -80,45 +80,42 @@ def index_update(k_raw: torch.Tensor, gate: torch.Tensor, ln_w: torch.Tensor, ln
 
 
 @triton.jit
-def _scores(QI, W, w_stride, PK, OUT, POS, R, NP, scale, wscale, H: tl.constexpr, HP: tl.constexpr,
-            D: tl.constexpr, BP: tl.constexpr, RB: tl.constexpr, FP8: tl.constexpr = False):
-    """Program (RB rows, pool block): s_p = sum_h w_h relu(scale * qi_h . pool_p) up to each row's position, heads padded to HP; RB never changes a row's bits.
-    FP8 (TF_GLM_KV=fp8): the pooled keys' e4m3 codes on the tensor cores and each pool's power-of-two scale on its
-    dots, which rounds nothing: the values of the bf16 pools they dequantize to."""
+def _scores(QI, W, w_stride, PK, OUT, POS, NP, NB, scale, wscale, H: tl.constexpr, HP: tl.constexpr,
+            D: tl.constexpr, BP: tl.constexpr, L: tl.constexpr, FP8: tl.constexpr = False):
+    """Program (row, L of the NB pool blocks scored): s_p = sum_h w_h relu(scale * qi_h . pool_p) up to the row's
+    position, heads padded to HP. The row's queries and head weights are loaded once for its L blocks, and each block
+    computes as it does alone (L = 1), the same bits. FP8 (TF_GLM_KV=fp8): the pooled keys' e4m3 codes on the tensor
+    cores and each pool's power-of-two scale on its dots, which rounds nothing: the values of the bf16 pools they
+    dequantize to."""
 
-    rb = tl.program_id(0)
-    pb = tl.program_id(1)
+    r = tl.program_id(0)
+    g = tl.program_id(1)
     P = tl.load(POS)
-    p = pb * BP + tl.arange(0, BP)
-    # tiles past this row block's last visible complete pool store -inf without dot products (the same allocations)
-    visible = (P + tl.minimum((rb + 1) * RB, R)) // 4
-    if pb * BP >= visible:
-        for i in tl.static_range(RB):
-            r = rb * RB + i
-            if r < R:
-                tl.store(OUT + r * NP + p, float("-inf"), mask=p < NP)
-        return
+    npool = (P + r + 1) // 4
     d = tl.arange(0, D)
     hh = tl.arange(0, HP)
     hok = hh < H
-    if FP8:
-        k, ks = kv8.load_rows(PK, p.to(tl.int64), p < (P + rb * RB + RB) // 4, d, D)   # [BP, D], [BP]
-    else:
-        k = tl.load(PK + p[:, None] * D + d[None, :], mask=(p < (P + rb * RB + RB) // 4)[:, None],
-                    other=0.0).to(tl.bfloat16)                                          # [BP, D]
-    for i in tl.static_range(RB):
-        r = rb * RB + i
-        if r < R:
-            npool = (P + r + 1) // 4
-            q = tl.load(QI + (r * H + hh[:, None]) * D + d[None, :], mask=hok[:, None], other=0.0).to(tl.bfloat16)
-            kr = tl.where((p < npool)[:, None], k, 0.0)
-            dots = tl.dot(q, tl.trans(kr))                                                # [HP, BP] fp32
-            if FP8:
-                dots = dots * ks[None, :]
-            w = tl.load(W + r * w_stride + hh, mask=hok, other=0.0).to(tl.float32) * wscale
-            sc = tl.sum(w[:, None] * tl.maximum(dots * scale, 0.0), axis=0)
-            sc = tl.where(p < npool, sc, float("-inf"))
-            tl.store(OUT + r * NP + p, sc, mask=p < NP)
+    q = tl.load(QI + (r * H + hh[:, None]) * D + d[None, :], mask=hok[:, None], other=0.0).to(tl.bfloat16)
+    w = tl.load(W + r * w_stride + hh, mask=hok, other=0.0).to(tl.float32) * wscale
+    for j in range(L):
+        pb = g * L + j
+        p = pb * BP + tl.arange(0, BP)
+        if pb < NB:
+            # blocks past the row's last visible complete pool store -inf without dot products
+            if pb * BP >= npool:
+                tl.store(OUT + r * NP + p, float("-inf"), mask=p < NP)
+            else:
+                if FP8:
+                    k, ks = kv8.load_rows(PK, p.to(tl.int64), p < npool, d, D)          # [BP, D], [BP]
+                else:
+                    k = tl.load(PK + p[:, None] * D + d[None, :], mask=(p < npool)[:, None],
+                                other=0.0).to(tl.bfloat16)                              # [BP, D]
+                dots = tl.dot(q, tl.trans(k))                                           # [HP, BP] fp32
+                if FP8:
+                    dots = dots * ks[None, :]
+                sc = tl.sum(w[:, None] * tl.maximum(dots * scale, 0.0), axis=0)
+                sc = tl.where(p < npool, sc, float("-inf"))
+                tl.store(OUT + r * NP + p, sc, mask=p < NP)
 
 
 def _top_pools(scores: torch.Tensor, k: int) -> torch.Tensor:
@@ -268,10 +265,10 @@ def score_columns(pos: int | None, rows: int, np_max: int) -> int:
     return min(np_max, max(TOPK_POOLS, (pos + rows) // POOL))
 
 
-# windows of SCORE_RB_FROM rows or more (prompt chunks) score SCORE_RB rows a program, each pool tile loaded once for
-# them (_scores: the same bits a row)
-SCORE_RB_FROM = 64
-SCORE_RB = 16
+# windows of SCORE_LOOP_FROM rows or more (prompt chunks) score SCORE_LOOP pool blocks a program, a row's queries and
+# head weights loaded once for them (_scores: the same bits a block); decode windows one block a program
+SCORE_LOOP_FROM = 64
+SCORE_LOOP = 32
 
 
 def select_tokens(qi: torch.Tensor, wts: torch.Tensor, pk: torch.Tensor, pos: int | None, R: int, np_max: int,
@@ -290,17 +287,16 @@ def select_tokens(qi: torch.Tensor, wts: torch.Tensor, pk: torch.Tensor, pos: in
     D = qi.shape[1] // H
     wscale = 1.0 / 5.656854249492381 if H == 32 else H ** -0.5            # 32 ** -0.5 exactly as before
     pkc, fp8 = kv8.view(pk)
-    rb = SCORE_RB if R >= SCORE_RB_FROM else 1
+    loop = SCORE_LOOP if R >= SCORE_LOOP_FROM else 1
     blocks = []
     for a in range(0, R, B):
         n = min(B, R - a)
         at = pos_dev if a == 0 else pos_dev + a                        # the block's first row's position
         # the bucket's columns past those selection reads are left unwritten (the -inf tiles cost a write each)
-        cols = score_columns(None if pos is None else pos + a, n, np_max)
-        _scores[(triton.cdiv(n, rb), triton.cdiv(cols, 64))](qi[a:a + n], wts[a:a + n], wts.stride(0), pkc, scores,
-                                                             at, n, np_max, D ** -0.5, wscale, H=H,
-                                                             HP=max(16, triton.next_power_of_2(H)), D=D, BP=64,
-                                                             RB=rb, FP8=fp8, num_warps=4)
+        nb = triton.cdiv(score_columns(None if pos is None else pos + a, n, np_max), 64)
+        _scores[(n, triton.cdiv(nb, loop))](qi[a:a + n], wts[a:a + n], wts.stride(0), pkc, scores, at, np_max, nb,
+                                            D ** -0.5, wscale, H=H, HP=max(16, triton.next_power_of_2(H)), D=D,
+                                            BP=64, L=loop, FP8=fp8, num_warps=4)
         blocks.append(top_pools(scores[:n], TOPK_POOLS, at))                           # ascending pool index
     del scores
     pools = blocks[0] if len(blocks) == 1 else torch.cat(blocks)
