@@ -117,6 +117,11 @@ GLM's image prompts (`vision/glm_processing.py`) keep an `<|image|>` the convers
 `LICENSES/Apache-2.0.txt`). No code is taken: Mia tells the template's markers apart by per-request marks, this
 tree by the span.
 
+The Responses API accepts OpenAI's `include` values and ignores them, refusing any other value
+(`server/responses_translate.py`), after MiaAI-Lab's patch 0093-responses-include for
+GLM-5.3-Flash-EXL3-2x-DGX-Sparks-TensorFold (Apache License 2.0, `LICENSES/Apache-2.0.txt`), rewritten here without
+its once-a-value log line.
+
 ## Vendored code and weights
 
 `src/tensorfold/drafters/vendor/z_lab_dflash/model_mlx.py` is the unmodified `dflash/model_mlx.py` from

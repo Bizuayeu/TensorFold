@@ -158,6 +158,26 @@ def _format(text: Any) -> dict[str, Any] | None:
     raise RequestError("text.format must be text, json_object or json_schema")
 
 
+# OpenAI's include values. Each asks for output this server has nothing to add to (reasoning comes as text in its
+# reasoning item and nothing is encrypted, no tool runs here, logprobs are empty), and clients send some by habit
+# (reasoning.encrypted_content on reasoning models), so they are accepted and ignored; any other value is refused,
+# as OpenAI refuses it. After MiaAI-Lab's patch 0093-responses-include (Apache License 2.0).
+INCLUDE = frozenset({"reasoning.encrypted_content", "message.output_text.logprobs", "message.input_image.image_url",
+                     "file_search_call.results", "web_search_call.results", "web_search_call.action.sources",
+                     "code_interpreter_call.outputs", "computer_call_output.output.image_url"})
+
+
+def _include(given: Any) -> None:
+    if given is None:
+        return
+    if not isinstance(given, list) or not all(isinstance(v, str) for v in given):
+        raise RequestError("include must be a list of strings")
+    unknown = [v for v in given if v not in INCLUDE]
+    if unknown:
+        raise RequestError(f"include has no value {', '.join(map(repr, unknown))}: the values are "
+                           f"{', '.join(sorted(INCLUDE))}")
+
+
 def translate(body: Any, store: Store) -> Request:
     """A Responses request as the chat completion that runs it; RequestError where it asks what this server lacks."""
 
@@ -167,9 +187,7 @@ def translate(body: Any, store: Store) -> Request:
     for name, reason in REFUSED.items():
         if body.get(name):
             raise RequestError(reason)
-    if body.get("include"):
-        raise RequestError(f"include is not supported ({', '.join(map(str, body['include']))}): reasoning comes as "
-                           "text in its reasoning item, and nothing is encrypted")
+    _include(body.get("include"))
     if body.get("truncation") not in (None, "disabled"):
         raise RequestError('truncation must be "disabled": a prompt too long for the context is refused')
     if body.get("top_logprobs"):
