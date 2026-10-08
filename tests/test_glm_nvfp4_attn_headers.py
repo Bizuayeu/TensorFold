@@ -187,6 +187,23 @@ def test_the_engine_config_reads_it_as_nvfp4(tmp_path):
     assert Config.read(tmp_path).quant != "nvfp4"
 
 
+@pytest.mark.parametrize("where, scaled", [(PINNED, False), (HERE, True)], ids=["pinned", "re-packed"])
+def test_the_head_is_nvfp4_where_its_scales_are(where, scaled):
+    """load's head: NVFP4 where the checkpoint stores lm_head's scales (the re-packed one), else BF16. Both read as
+    quant "nvfp4" (Config.read by ``modelopt_nvfp4``), so "nvfp4 and the scales" picks what "bf16 and the scales" did:
+    bf16 (exl3 or nvfp4) differs from nvfp4 only on EXL3."""
+
+    from tensorfold.families.glm5_next import modelopt_nvfp4
+
+    q = json.loads((where / "config.json").read_text())["quantization_config"]
+    method = str(q.get("quant_method") or "mlx").lower()
+    exl3, nvfp4 = method == "exl3", method == "modelopt" and modelopt_nvfp4(q)
+    bf16 = exl3 or nvfp4
+    has = "lm_head.weight_scale" in _headers(where)
+    assert nvfp4 and not exl3 and has == scaled
+    assert (bf16 and has) == (nvfp4 and has) == scaled
+
+
 def test_the_checkpoint_counts_its_nvfp4_attention(headers, pinned):
     """The startup agreement's checkpoint kind: how many attention and head projections are NVFP4 (none pinned)."""
 

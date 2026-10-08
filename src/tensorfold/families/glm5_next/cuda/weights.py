@@ -546,7 +546,7 @@ def load(model_dir: str | Path, *, rank: int, world: int = 2, device: str = "cud
         built = [layer(i, nxt=n) for i, n in zip(which, which[1:] + [cfg.layers])]   # the last one reads MTP's ahead
         lo, hi = plan.span(cfg.vocab, UNIT)
         draft_head = None
-        if bf16 and "lm_head.weight_scale" in rd.index:      # an NVFP4 head (W4A16): drafts read it too
+        if nvfp4 and "lm_head.weight_scale" in rd.index:     # an NVFP4 head (W4A16): drafts read it too
             head = Fp4Linear.from_checkpoint(rd.get("lm_head.weight")[lo:hi].to(dev),
                                              rd.get("lm_head.weight_scale")[lo:hi].to(dev),
                                              float(rd.get("lm_head.weight_scale_2")))
