@@ -20,7 +20,6 @@ from tensorfold.families.glm5_next.cuda.split import AXIS, ShardPlan, rule
 FIXTURES = Path(__file__).parent / "fixtures"
 HERE = FIXTURES / "glm53_flash_nvfp4_attn_w4a16"
 PINNED = FIXTURES / "glm53_flash_nvfp4"
-GIB = 2 ** 30
 KDA = ("q_proj", "k_proj", "v_proj", "b_proj", "f_a_proj", "g_a_proj", "f_b_proj", "g_b_proj", "o_proj")
 DSA = ("q_a_proj", "kv_a_proj_with_mqa", "q_b_proj", "kv_b_proj", "o_proj", "indexer.wq_b")
 LAYER = re.compile(r"layers\.(\d+)\.self_attn\.(.+)\.weight$")
@@ -121,7 +120,7 @@ def _rank_bytes(where: Path, world: int, rank: int, names) -> dict[str, int]:
 
 
 @pytest.mark.torch
-def test_rank_bytes(headers, pinned, capsys):
+def test_rank_bytes(headers, pinned):
     """split_weights on both checkpoints' headers, rank 0 of two: every tensor the pinned one holds alike but the
     re-packed ones, which hold their codes and e4m3 scales with the rows padded to 128 (``qmm.pack``), the weight
     scale a number; kv_b as the latent path's BF16 copy either way (dequantized at load); the head without its 4-bit
@@ -150,10 +149,6 @@ def test_rank_bytes(headers, pinned, capsys):
         assert repacked[base + ".weight_scale_2"] == 0
     kv_b = [n for n in changed if ".kv_b_proj." in n]
     assert all(repacked[n] + repacked[n[:-len(".weight")] + ".weight_scale"] == pin[n] for n in kv_b)
-    saved = sum(pin.values()) - sum(repacked.values())
-    with capsys.disabled():
-        print(f"\nre-packed attention and head, rank 0 of two: {sum(repacked.values()) / GIB:.2f} GiB, "
-              f"{saved / GIB:.2f} GiB under the pinned checkpoint's {sum(pin.values()) / GIB:.2f}")
 
 
 def test_the_family_reads_the_mixed_precision_config(tmp_path, monkeypatch):
