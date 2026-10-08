@@ -27,7 +27,7 @@ from test_glm_tp3 import LONG, PROMPT, SHAPE, Ranks, _tolerance  # noqa: E402
 from threadcomm import run_ranks  # noqa: E402
 
 from tensorfold.cuda.nvfp4 import format as fmt  # noqa: E402
-from tensorfold.cuda.nvfp4.linear import Fp4Linear  # noqa: E402
+from tensorfold.cuda.nvfp4.linear import ROW_ALIGN, Fp4Linear  # noqa: E402
 from tensorfold.engine.exact_sampling import Sampling  # noqa: E402
 from tensorfold.families.glm5_next.cuda import latent, split  # noqa: E402
 from tensorfold.families.glm5_next.cuda.qmm import B16  # noqa: E402
@@ -144,7 +144,7 @@ def test_projections_hold_the_dequantized_values(paths, world):
     for rank in range(world):
         w, t = (load(paths[k], rank=rank, world=world, mtp=False) for k in (key, f"{key}_twin"))
         for what, (lin, ref) in _pairs(w, t).items():
-            assert lin.k == ref.k and lin.n == -(-ref.n // 8) * 8, what
+            assert lin.k == ref.k and lin.n == -(-ref.n // ROW_ALIGN) * ROW_ALIGN, what
             want = ref.weight.float().t()
             eye = torch.eye(lin.k, dtype=torch.bfloat16, device="cuda")
             for got in (lin.prefill(eye, f32=True), lin(eye[:8], f32=True)):
@@ -268,7 +268,7 @@ def test_three_rank_windows_never_depend_on_their_rows(paths, rank):
 
     w = load(paths["three"], rank=rank, world=3, layers=[0], mtp=False)
     k = w.layers[0].kda
-    assert k.proj.n % 8 == 0 and 0 <= k.proj.n - (k.b_off + k.heads) < 8
+    assert k.proj.n % ROW_ALIGN == 0 and 0 <= k.proj.n - (k.b_off + k.heads) < ROW_ALIGN
     x = torch.randn((4, D), generator=torch.Generator().manual_seed(rank)).to(torch.bfloat16).cuda()
     p = k.proj(x)
     assert torch.equal(p, torch.cat([k.proj(x[i:i + 1]) for i in range(4)]))

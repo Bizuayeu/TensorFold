@@ -34,6 +34,7 @@ def _prompt_ext():
 
 
 PROMPT_TILE = 4             # ``prompt.cu``'s tile (128x128 on four 64x64 warps, two blocks an SM): never changes bits
+ROW_ALIGN = 8               # bf16 elements in 16 bytes: rows whose stride is a multiple of it are read in place
 
 
 def _prompt(mode: int, w: torch.Tensor, bs: torch.Tensor | None, scale: float, n: int, npad: int, x: torch.Tensor,
@@ -41,7 +42,7 @@ def _prompt(mode: int, w: torch.Tensor, bs: torch.Tensor | None, scale: float, n
     """bf16 prompt rows (M, K) -> (M, n) bf16 (fp32 sums unrounded with ``f32``): exact weights, one fp32 chain over K;
     a row's bits never depend on M."""
 
-    if x.dtype != torch.bfloat16 or x.stride(-1) != 1 or (x.shape[0] > 1 and x.stride(0) % 8) or x.data_ptr() % 16:
+    if x.dtype != torch.bfloat16 or x.stride(-1) != 1 or (x.shape[0] > 1 and x.stride(0) % ROW_ALIGN) or x.data_ptr() % 16:
         x = x.to(torch.bfloat16).contiguous()
     dtype = torch.float32 if f32 else torch.bfloat16
     fits = out is not None and out.is_contiguous() and out.dtype == dtype and out.shape == (x.shape[0], n)

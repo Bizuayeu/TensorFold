@@ -14,7 +14,7 @@ from tensorfold.cuda import experts as grouped
 
 from tensorfold.cuda.exl3.experts import Exl3RoutedExperts as Exl3Experts
 from tensorfold.cuda.nvfp4 import experts as nvx
-from tensorfold.cuda.nvfp4.linear import Fp4Linear
+from tensorfold.cuda.nvfp4.linear import ROW_ALIGN, Fp4Linear
 from .. import modelopt_nvfp4
 from . import latent
 from .qmm import B16, Q4, as_i32, make_b16, make_q4, quantize4, stack_b16, stack_q4
@@ -332,8 +332,8 @@ def load(model_dir: str | Path, *, rank: int, world: int = 2, device: str = "cud
 
     def stack_fp4(names: list[str]) -> Fp4Linear:
         """NVFP4 projections of one input as one matmul under their one weight scale, the codes' rows zero-padded to a
-        multiple of 8: each row of its output then starts 16-byte aligned, as the matmuls reading columns of it in
-        place (KDA's f_a and g_a) load their rows."""
+        multiple of ``ROW_ALIGN``: each row of its output then starts 16-byte aligned, as the matmuls reading columns of
+        it in place (KDA's f_a and g_a) load their rows."""
 
         if not all(packed(n) for n in names):
             raise ValueError(f"{', '.join(names)}: some stored NVFP4 and some not; one matmul takes one format")
@@ -343,7 +343,7 @@ def load(model_dir: str | Path, *, rank: int, world: int = 2, device: str = "cud
                              "matmul under one weight scale")
         codes = torch.cat([t(n + ".weight") for n in names])
         blocks = torch.cat([t(n + ".weight_scale").view(torch.uint8) for n in names])
-        pad = -codes.shape[0] % 8
+        pad = -codes.shape[0] % ROW_ALIGN
         if pad:
             codes = torch.cat([codes, codes.new_zeros((pad, codes.shape[1]))])
             blocks = torch.cat([blocks, blocks.new_zeros((pad, blocks.shape[1]))])
