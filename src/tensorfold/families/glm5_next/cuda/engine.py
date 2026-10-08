@@ -106,6 +106,19 @@ def without_mtp(transform, layers: int):
     return lambda name, info: (0, 0) if name.startswith(prefix) else transform(name, info)
 
 
+def recording(transform: Callable) -> tuple[Callable, list[str]]:
+    """``transform`` that also keeps the name of every tensor it sizes: the startup estimate's header read then tells
+    the checkpoint's kind (``nvfp4_attention``) without reading the headers again."""
+
+    names: list[str] = []
+
+    def each(name: str, info: dict):
+        names.append(name)
+        return transform(name, info)
+
+    return each, names
+
+
 def different_settings(names: list[str], rows: list[list[int]]) -> str | None:
     """The refusal when the ranks' startup settings (``rows``, one a rank, valued in ``names``' order) differ: each
     setting that differs, by name, with rank 0's value and every other rank's that differs; None when all agree."""
@@ -164,7 +177,7 @@ class GlmEngine:
         from .weights import load
         from .split import ShardPlan, rule
         from .. import nvfp4_attention
-        from tensorfold.cuda.capacity import admit, headers
+        from tensorfold.cuda.capacity import admit
         from tensorfold.cuda.geometry import (PREFILL_ROWS, dflash2_geometry, dflash2_weights, mla_geometry,
                                               split_weights)
         from tensorfold.vision.glm_cuda import capacity_geometry, weight_transform as vision_weights
@@ -204,8 +217,9 @@ class GlmEngine:
                                                                latent=LATENT, mtp=self.mtp_on, kv=self.kv),
                                      model_dir, vision, rank, offload=vision_offload, world=world,
                                      visual_tokens=vision_image_tokens)
+        sized, tensor_names = recording(vision_weights(weights_estimate, vision, rank, vision_offload))
         self.capacity_plan = admit(model_dir, context if explicit else cfg.dense_limit, explicit, torch, geometry,
-                                   vision_weights(weights_estimate, vision, rank, vision_offload), rank=rank,
+                                   sized, rank=rank,
                                    world=world, gather=self._gather_ints,
                                    draft_dir=drafter, draft_weights=lambda d: dflash2_weights(d, world),
                                    draft_geometry=lambda text: dflash2_geometry(text, world, MAX_ROWS, ring=DRAFT_RING))
@@ -236,7 +250,7 @@ class GlmEngine:
                     *zip(("TF_GLM_HEAT_HIGH", "TF_GLM_HEAT_LOW", "TF_GLM_HEAT_CEILING"), bands),
                     ("--vision", int(vision)),
                     # the checkpoint: pinned or attention NVFP4
-                    ("the checkpoint's NVFP4 attention", nvfp4_attention(headers(model_dir, rank=rank)))]
+                    ("the checkpoint's NVFP4 attention", nvfp4_attention(tensor_names))]
         mine = [value for _, value in settings]
         # other conversations' kept prompts get what the window leaves, at most TF_GLM_CACHE_GIB, the same on every rank
         plan = self.capacity_plan

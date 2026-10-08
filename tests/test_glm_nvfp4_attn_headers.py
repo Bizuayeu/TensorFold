@@ -10,6 +10,7 @@ from __future__ import annotations
 import gzip
 import json
 import re
+import struct
 from pathlib import Path
 
 import pytest
@@ -211,3 +212,39 @@ def test_the_checkpoint_counts_its_nvfp4_attention(headers, pinned):
 
     assert nvfp4_attention(headers) == 373
     assert nvfp4_attention(pinned) == 0
+
+
+def _header_only(where: Path, names: dict, out: Path) -> Path:
+    """A checkpoint folder whose one safetensors file holds ``names``' header and no data (the estimate reads no more)."""
+
+    from tensorfold.cuda.capacity import SIZES
+
+    entries, at = {}, 0
+    for name, (dtype, shape) in names.items():
+        size = SIZES[dtype]
+        for n in shape:
+            size *= n
+        entries[name] = {"dtype": dtype, "shape": shape, "data_offsets": [at, at + size]}
+        at += size
+    raw = json.dumps(entries).encode()
+    out.mkdir()
+    (out / "model.safetensors").write_bytes(struct.pack("<Q", len(raw)) + raw)
+    (out / "config.json").write_bytes((where / "config.json").read_bytes())
+    return out
+
+
+@pytest.mark.parametrize("where, count", [(PINNED, 0), (HERE, 373)], ids=["pinned", "re-packed"])
+def test_the_startup_estimate_keeps_the_names_the_checkpoint_kind_is_counted_from(where, count, tmp_path):
+    """The engine counts the checkpoint's NVFP4 attention from the names its startup estimate sized (``recording``),
+    not from a second read of the headers: the same count."""
+
+    from tensorfold.cuda.capacity import estimate_weights, headers
+    from tensorfold.families.glm5_next import nvfp4_attention
+    from tensorfold.families.glm5_next.cuda.engine import recording
+
+    folder = _header_only(where, _headers(where), tmp_path / "checkpoint")
+    seen = []
+    transform, names = recording(lambda name, info: (seen.append(name) or 1, 0))
+    estimate_weights(folder, transform, rank=0, world=2)
+    assert names == seen and len(names) == len(_headers(where))
+    assert nvfp4_attention(names) == nvfp4_attention(headers(folder, rank=0)) == count
