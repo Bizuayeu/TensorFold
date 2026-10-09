@@ -126,9 +126,10 @@ for GLM-5.3-Flash-EXL3-2x-DGX-Sparks-TensorFold (Apache License 2.0, `LICENSES/A
 this tree's FP8 pooled keys and scored columns; decode windows keep one block a program.
 
 A think block that collapsed into repeating itself is closed when `TF_GLM_LOOP_GUARD=1` (off by default;
-`engine/loop_guard.py` and its gate in `cuda/server.py`, the count in the reply's usage as `loop_guard`), taken from
-MiaAI-Lab's patch 0091-glm-loop-guard for GLM-5.3-Flash-EXL3-2x-DGX-Sparks-TensorFold (Apache License 2.0,
-`LICENSES/Apache-2.0.txt`), its test (`tools/test_loop_guard.py`) rewritten as `tests/test_glm_loop_guard.py`.
+`engine/loop_guard.py` and its gate in `cuda/server.py`, the count in the reply's `tensorfold` block as
+`loop_guard`), taken from MiaAI-Lab's patch 0091-glm-loop-guard for GLM-5.3-Flash-EXL3-2x-DGX-Sparks-TensorFold
+(Apache License 2.0, `LICENSES/Apache-2.0.txt`), its test (`tools/test_loop_guard.py`) rewritten as
+`tests/test_glm_loop_guard.py`.
 
 ## Vendored code and weights
 
