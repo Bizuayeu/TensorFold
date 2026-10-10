@@ -1,4 +1,4 @@
-"""Fixtures for `tf-cuda-test nvfp4-experts`: the Python grouped NVFP4 experts' plan, packing and outputs."""
+"""Fixtures for `tf-cuda-test nvfp4-experts`, made with the BIZ 2.x engine: its nvfp4/experts.py has the staged rows."""
 import argparse
 import sys
 from pathlib import Path
@@ -10,6 +10,7 @@ from oracle import save  # noqa: E402
 
 DECODE = (1, 3)  # one-block plans
 PROMPT = (300,)  # 2100 pairs: the wide plan (rank, offsets, scatter), items of 16 as the decode form
+STAGED = (64, 300, 1000)  # prompt rows on the staged kernel: one-block plans and wide ones, items of 64
 
 
 def e4m3(shape, g):
@@ -53,8 +54,24 @@ def main() -> None:
         torch.cuda.synchronize()
         arrays.update({f"picks{rows}": picks, f"x{rows}": x, f"act{rows}": act, f"y{rows}": y,
                        f"counts{rows}": plan.counts, f"items{rows}": plan.items, f"members{rows}": plan.members})
+    for rows in STAGED:
+        picks = torch.stack([torch.randperm(e - 1, generator=g)[:a.top] for _ in range(rows)]).int()
+        picks = torch.cat([picks, torch.full((rows, 1), e - 1, dtype=torch.int32)], 1).contiguous()
+        x = (torch.randn((rows, d), generator=g) * 0.5).to(torch.bfloat16)
+        plan = grouped.Plan(rows, slots, e, "cuda", prefill=True)
+        grouped.route(picks.cuda(), plan, fx4.STAGED_TILE)
+        act = torch.empty((rows * slots, ni), dtype=torch.bfloat16, device="cuda")
+        fx4.prompt_gate_up(x.cuda(), ex, plan, act, rows)
+        y = torch.empty((rows * slots, d), dtype=torch.bfloat16, device="cuda")
+        fx4.prompt_down(act, ex, plan, y, rows)
+        y32 = torch.empty((rows * slots, d), dtype=torch.float32, device="cuda")
+        fx4.prompt_down(act, ex, plan, y32, rows)
+        torch.cuda.synchronize()
+        arrays.update({f"spicks{rows}": picks, f"sx{rows}": x, f"sact{rows}": act, f"sy{rows}": y, f"sy32_{rows}": y32,
+                       f"scounts{rows}": plan.counts, f"sitems{rows}": plan.items, f"smembers{rows}": plan.members})
     save(Path(a.out), {"experts": e, "dims": d, "width": ni, "slots": slots, "decode": ",".join(map(str, DECODE)),
-                       "prompt": ",".join(map(str, PROMPT))}, arrays)
+                       "prompt": ",".join(map(str, PROMPT)),
+                       "staged": ",".join(map(str, STAGED))}, arrays)
 
 
 if __name__ == "__main__":

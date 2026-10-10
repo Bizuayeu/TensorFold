@@ -70,7 +70,7 @@ pub const Grouped = struct {
                 return a.runPrompt(s, up, in.x, in.stride, if (up) in.slots else 0, w.ptr, w.kg, nb, p, out, w.n, items);
             },
             .fp8g => return (g.fp8g orelse return error.FormatNotLoaded).run(s, epi, in, l, p, true, out, items, skip),
-            .nvfp4 => return error.PromptFormNotBuilt, // a staged NVFP4 prompt kernel takes these rows (#548)
+            .nvfp4 => return (g.nvfp4 orelse return error.FormatNotLoaded).runPrompt(s, epi, in, l, p, out, items, skip),
         }
     }
 };
@@ -266,10 +266,12 @@ pub const Fp8Experts = struct {
     }
 };
 
-/// NVFP4 experts (nvfp4/experts.cu): the Python packing and kernel, decode rows (16 pairs an item).
+/// NVFP4 experts (nvfp4/experts.cu, nvfp4_experts_prompt.cu): the Python packing, decode rows and staged prompt rows.
 pub const Nvfp4Experts = struct {
     mod: Module,
+    pre_mod: Module,
     fns: [3]Function, // by Epi
+    pre_fns: [3]Function, // by Epi
     resident: [3]usize, // blocks the grid may hold: per SM times SMs
 
     pub const cols = 32; // output columns a block
@@ -279,45 +281,76 @@ pub const Nvfp4Experts = struct {
         pub const gate_up = "_ZN16tf_nvfp4_experts19nvfp4_expert_kernelILi2ELi2ELi4EEEvPK13__nv_bfloat16iiPK5uint4PKfiiPKiSA_SA_Pvifi";
         pub const down_f32 = "_ZN16tf_nvfp4_experts19nvfp4_expert_kernelILi1ELi0ELi4EEEvPK13__nv_bfloat16iiPK5uint4PKfiiPKiSA_SA_Pvifi";
         pub const down_bf16 = "_ZN16tf_nvfp4_experts19nvfp4_expert_kernelILi1ELi3ELi4EEEvPK13__nv_bfloat16iiPK5uint4PKfiiPKiSA_SA_Pvifi";
+        pub const pre_gate_up = "_ZN23tf_nvfp4_experts_prompt19nvfp4_prompt_kernelILi2ELi2ELi2ELi2ELi4ELi2EEEvPK13__nv_bfloat16iiPK5uint4PKfiiPKiSA_SA_Pvifi";
+        pub const pre_down_f32 = "_ZN23tf_nvfp4_experts_prompt19nvfp4_prompt_kernelILi1ELi0ELi2ELi2ELi4ELi3EEEvPK13__nv_bfloat16iiPK5uint4PKfiiPKiSA_SA_Pvifi";
+        pub const pre_down_bf16 = "_ZN23tf_nvfp4_experts_prompt19nvfp4_prompt_kernelILi1ELi3ELi2ELi2ELi4ELi3EEEvPK13__nv_bfloat16iiPK5uint4PKfiiPKiSA_SA_Pvifi";
     };
+
+    /// The prompt kernel's dynamic shared memory by Epi: Pro::SMEM, stages of 64 x rows and four column blocks.
+    pub const prompt_smem = [3]u32{ 2 * (64 * 8 + 4 * 2 * 2 * 36) * 16, 3 * (64 * 8 + 4 * 2 * 36) * 16, 3 * (64 * 8 + 4 * 2 * 36) * 16 };
 
     pub fn load(d: *const Driver, sms: usize) !Nvfp4Experts {
         if (!kernels.available) return error.BuiltWithoutKernels;
         var mod = try Module.load(d, kernels.nvfp4_experts);
         errdefer mod.unload();
-        var e: Nvfp4Experts = .{ .mod = mod, .fns = undefined, .resident = undefined };
+        var pre_mod = try Module.load(d, kernels.nvfp4_experts_prompt);
+        errdefer pre_mod.unload();
+        var e: Nvfp4Experts = .{ .mod = mod, .pre_mod = pre_mod, .fns = undefined, .pre_fns = undefined, .resident = undefined };
         for ([_][:0]const u8{ symbols.gate_up, symbols.down_f32, symbols.down_bf16 }, 0..) |name, i| {
             e.fns[i] = try mod.function(name);
             e.resident[i] = @max(1, try e.fns[i].occupancy(128, 0)) * sms;
+        }
+        for ([_][:0]const u8{ symbols.pre_gate_up, symbols.pre_down_f32, symbols.pre_down_bf16 }, 0..) |name, i| {
+            e.pre_fns[i] = try pre_mod.function(name);
+            try e.pre_fns[i].allowDynamicShared(prompt_smem[i]);
         }
         return e;
     }
 
     pub fn unload(e: *Nvfp4Experts) void {
+        e.pre_mod.unload();
         e.mod.unload();
     }
 
     /// One call of nvfp4/experts.py's _run on a plan of at most `items` items.
     pub fn run(e: *const Nvfp4Experts, s: Stream, epi: Epi, in: Rows, l: Layer, p: Plan, out: u64, items: usize, skip: i32) !void {
-        const gate = epi == .up;
-        const kg = (if (gate) l.dims else l.width) / 32;
-        const nb = (if (gate) l.width else l.dims) / cols;
+        const nb = columnBlocks(epi, l);
         const ei: usize = @backingInt(epi);
         const grid = @min((items * nb + 3) / 4, e.resident[ei]);
         if (grid < 1) return;
+        var a = args(epi, in, l, p, out, skip);
+        try launch_.launch(e.fns[ei], .{ .grid = .{ .x = @intCast(grid), .y = 1, .z = 1 }, .block = .{ .x = 128, .y = 1, .z = 1 } }, s, &a);
+    }
+
+    /// The prompt kernel (BIZ 2.x nvfp4/experts.py _prompt) on a plan in items of 64: a CTA an (item, 4 column blocks).
+    pub fn runPrompt(e: *const Nvfp4Experts, s: Stream, epi: Epi, in: Rows, l: Layer, p: Plan, out: u64, items: usize, skip: i32) !void {
+        const ei: usize = @backingInt(epi);
+        const grid = items * ((columnBlocks(epi, l) + 3) / 4);
+        if (grid < 1) return;
+        var a = args(epi, in, l, p, out, skip);
+        try launch_.launch(e.pre_fns[ei], .{ .grid = .{ .x = @intCast(grid), .y = 1, .z = 1 }, .block = .{ .x = 256, .y = 1, .z = 1 }, .shared = prompt_smem[ei] }, s, &a);
+    }
+
+    fn columnBlocks(epi: Epi, l: Layer) usize {
+        return (if (epi == .up) l.width else l.dims) / cols;
+    }
+
+    /// Both kernels' arguments: rows, weights and their global scales, the plan, out, and the SwiGLU clamp for up.
+    fn args(epi: Epi, in: Rows, l: Layer, p: Plan, out: u64, skip: i32) launch_.Args {
+        const gate = epi == .up;
         var a: launch_.Args = .{};
         a.add(in.x);
         a.add(@as(i32, @intCast(in.stride)));
         a.add(@as(i32, @intCast(if (gate) in.slots else 0)));
         a.add(if (gate) l.up else l.down);
         a.add(if (gate) l.up_scale else l.down_scale);
-        a.add(@as(i32, @intCast(kg)));
-        a.add(@as(i32, @intCast(nb)));
+        a.add(@as(i32, @intCast((if (gate) l.dims else l.width) / 32)));
+        a.add(@as(i32, @intCast(columnBlocks(epi, l))));
         for ([_]u64{ p.items, p.counts, p.members, out }) |v| a.add(v);
         a.add(@as(i32, @intCast(if (gate) l.width else l.dims)));
         a.add(if (gate) l.limit else @as(f32, 0.0));
         a.add(skip);
-        try launch_.launch(e.fns[ei], .{ .grid = .{ .x = @intCast(grid), .y = 1, .z = 1 }, .block = .{ .x = 128, .y = 1, .z = 1 } }, s, &a);
+        return a;
     }
 
     /// Where input 16h + 4t + q of a lane's word sits: nibble 2h + q/2 + 4(q%2) (fp4pair's field order).
@@ -388,13 +421,13 @@ test "a packed nvfp4 block puts each nibble and scale where nvfp4/experts.py's _
     try std.testing.expectEqual(scales[44 * 4 + 3], sc[((2 * 2 + 1) * 4 + 1) * 2]);
 }
 
-test "nvfp4 prompt rows are refused until a prompt kernel is built" {
-    const n: Nvfp4Experts = undefined;
-    const g: Grouped = .{ .nvfp4 = &n };
+test "nvfp4 prompt rows need the format's kernels, which stage 34,816 and 38,400 bytes a CTA" {
+    const g: Grouped = .{};
     const l: Layer = .{ .format = .nvfp4, .up = 0, .down = 0, .width = 64, .dims = 64, .experts = 2 };
-    const s: Stream = undefined;
+    const s: Stream = undefined; // never reached: the refusal comes first
     const p: Plan = .{ .members = 0, .items = 0, .counts = 0, .rank = 0, .hist = 0 };
-    try std.testing.expectError(error.PromptFormNotBuilt, g.prompt(s, .up, .{ .x = 0, .stride = 64 }, l, p, 0, 1, -1));
+    try std.testing.expectError(error.FormatNotLoaded, g.prompt(s, .up, .{ .x = 0, .stride = 64 }, l, p, 0, 1, -1));
+    try std.testing.expectEqual([3]u32{ 34816, 38400, 38400 }, Nvfp4Experts.prompt_smem);
 }
 
 test "a packed fp8 expert puts each word where fp8/experts.py's pack does" {
