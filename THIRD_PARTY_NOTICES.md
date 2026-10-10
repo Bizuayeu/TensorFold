@@ -139,6 +139,12 @@ TensorFold's prompt stop at chunk boundaries (`05dfb7b`, Ash Hart). Rewritten he
 client's poll handed to the engine as `generate`'s `cancelled`; its `--parallel` scheduler half has no counterpart in
 this tree.
 
+The CUDA server tokenizes through HF tokenizers' batch call with Python's GIL released (`cuda/server.py`'s
+`App._encode_ids`: the same ids as `encode`), after MiaAI-Lab's patch 0099-glm-tokenize-nogil (main at `b5808ac6`) for
+GLM-5.3-Flash-EXL3-2x-DGX-Sparks-TensorFold (Apache License 2.0, `LICENSES/Apache-2.0.txt`). Rewritten here for this
+tree's call sites; image prompts tokenize in the HF processor, which the patch's `GlmVision.prepare` half has no
+counterpart for.
+
 ## Vendored code and weights
 
 `src/tensorfold/drafters/vendor/z_lab_dflash/model_mlx.py` is the unmodified `dflash/model_mlx.py` from
