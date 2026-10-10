@@ -131,6 +131,14 @@ A think block that collapsed into repeating itself is closed when `TF_GLM_LOOP_G
 (Apache License 2.0, `LICENSES/Apache-2.0.txt`), its test (`tools/test_loop_guard.py`) rewritten as
 `tests/test_glm_loop_guard.py`.
 
+A prompt whose client left stops after the chunk being filled, on every rank alike (`families/glm5_next/cuda/stop.py`'s
+`PromptStop`, `TF_GLM_PROMPT_STOP`, on by default: each rank's wish is one int32 of an all-gather after every chunk
+but the last), after MiaAI-Lab's patch 0109-glm-prompt-stop (branch `tp4` at `ebebe9b1`) for
+GLM-5.3-Flash-EXL3-2x-DGX-Sparks-TensorFold (Apache License 2.0, `LICENSES/Apache-2.0.txt`), itself after upstream
+TensorFold's prompt stop at chunk boundaries (`05dfb7b`, Ash Hart). Rewritten here beside #301's `StopVote`, the
+client's poll handed to the engine as `generate`'s `cancelled`; its `--parallel` scheduler half has no counterpart in
+this tree.
+
 ## Vendored code and weights
 
 `src/tensorfold/drafters/vendor/z_lab_dflash/model_mlx.py` is the unmodified `dflash/model_mlx.py` from

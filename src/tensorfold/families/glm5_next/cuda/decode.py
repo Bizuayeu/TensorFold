@@ -16,7 +16,7 @@ from . import glue, prof, qmm
 from .forward import Buffers, State, chunks_for, commit, compute, mm, stage
 from .mtp import mtp_compute, mtp_forward, mtp_stage
 from .sparse import pool_bucket
-from .stop import StopVote, stopped
+from .stop import PromptStopped, StopVote, stopped
 from .weights import Weights
 
 
@@ -117,6 +117,7 @@ class Engine:
         self.last_hidden: torch.Tensor | None = None
         self.constraint = self.window = None            # a request's grammar, and the next sample's rows under it
         self.vote: StopVote | None = None               # rides on every verify sample's all-gather
+        self.prompt_stop = None                         # stop.PromptStop: a prompt's vote after each chunk
         self.heat = None                                # heat.Heat: a prefill's waits between chunks
         self.heat_wait = 0.0                            # s the last prefill waited
         self.draft_n = w.head.n
@@ -367,7 +368,8 @@ def prefill(e: Engine, prompt: Sequence[int], sampling: Sampling | None, *, mtp:
             resume: Snapshot | None = None, keep_at: int | None = None, keep=None, prompt_logprobs=None,
             vision=None) -> int:
     """Commit the prompt in chunks and sample its first token; a resumed prompt ends in a fresh prefill's state.
-    ``prompt_logprobs`` (``PromptProbabilities``) collects every prompt token's teacher-forced row."""
+    ``prompt_logprobs`` (``PromptProbabilities``) collects every prompt token's teacher-forced row. ``e.prompt_stop``
+    (``stop.PromptStop``) votes after each chunk but the last: a stop raises ``PromptStopped``, those chunks committed."""
 
     if not prompt:
         raise ValueError("prefill requires at least one token")
@@ -399,6 +401,7 @@ def prefill(e: Engine, prompt: Sequence[int], sampling: Sampling | None, *, mtp:
     kept = resume if keep_at == begin else None
     last = None
     heat = getattr(e, "heat", None)
+    vote = getattr(e, "prompt_stop", None)
     e.heat_wait = 0.0
     if heat is not None:
         heat.start()                         # this prompt's first chunk has no rise
@@ -436,6 +439,11 @@ def prefill(e: Engine, prompt: Sequence[int], sampling: Sampling | None, *, mtp:
                     _absorb_rows(e, b.fnormed[:len(nxt)], nxt, _images(vision, start + 1, len(nxt)))
         with prof.timed("commit"):
             commit(w, st, b, R, R)
+        if vote is not None and start + R < len(prompt) and vote():    # every rank: after the same chunk
+            if kept is not None:                 # a state the committed rows reach is a prefix's
+                keep(kept)
+            prof.active = False
+            raise PromptStopped(start + R)
     if kept is not None:
         keep(kept)
     prof.active = False

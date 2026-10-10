@@ -230,10 +230,11 @@ class GlmEngine:
         prefill_rows = PREFILL_ROWS if prefill_rows is None else int(prefill_rows)
         from . import overlap, reduce
         from .heat import Heat
+        from .stop import prompt_stop_on
 
         # TF_GLM_PREFILL_OVERLAP / TF_GLM_OVERLAP_PIECES / TF_GLM_PREFILL_REDUCE: every rank must make a chunk's
         # exchanges alike; TF_GLM_HEAT_HIGH / TF_GLM_HEAT_LOW / TF_GLM_HEAT_CEILING: every rank must wait on the same
-        # bands and ceiling
+        # bands and ceiling; TF_GLM_PROMPT_STOP: every rank must vote after a chunk or none
         self.heat = Heat.from_env()
         bands = ([round(self.heat.high * 10), round(self.heat.low * 10),
                   round(self.heat.ceiling * 10) if self.heat.ceiling is not None else 0]
@@ -248,6 +249,7 @@ class GlmEngine:
                     ("TF_GLM_KDA_DECODE_WIDE", int(self.kda_wide)), ("TF_GLM_COPY_DRAFTS", int(self.copy)),
                     ("TF_GLM_B16_DECODE_TABLE", int(self.b16_table)),
                     *zip(("TF_GLM_HEAT_HIGH", "TF_GLM_HEAT_LOW", "TF_GLM_HEAT_CEILING"), bands),
+                    ("TF_GLM_PROMPT_STOP", int(prompt_stop_on())),
                     ("--vision", int(vision)),
                     # the checkpoint: pinned or attention NVFP4
                     ("the checkpoint's NVFP4 attention", nvfp4_attention(tensor_names))]
@@ -577,20 +579,20 @@ class GlmEngine:
 
     def _run(self, prompt: list[int], max_tokens: int, sampling, stop_eos: bool, on_tokens: Callable[[list[int]], Any],
              code: list[int], hit, draft: bool, constraint=None, prompt_logprobs=None,
-             vision=None) -> dict[str, Any]:
+             vision=None, cancelled: Callable[[], bool] | None = None) -> dict[str, Any]:
         self.e.constraint, self.e.window = constraint, None       # both ranks walk and mask the same rows
         try:
             return self._run_once(prompt, max_tokens, sampling, stop_eos, on_tokens, code, hit, draft,
-                                  prompt_logprobs, vision)
+                                  prompt_logprobs, vision, cancelled)
         finally:
-            self.e.constraint = self.e.window = self.e.vote = None
+            self.e.constraint = self.e.window = self.e.vote = self.e.prompt_stop = None
 
     def _run_once(self, prompt: list[int], max_tokens: int, sampling, stop_eos: bool,
                   on_tokens: Callable[[list[int]], Any], code: list[int], hit, draft: bool,
-                  prompt_logprobs=None, vision=None) -> dict[str, Any]:
+                  prompt_logprobs=None, vision=None, cancelled=None) -> dict[str, Any]:
         from .decode import DepthPolicy, dflash_decode, mtp_decode, prefill, serial_decode
         from .drafter_choice import DrafterChoice, auto_decode
-        from .stop import StopVote
+        from .stop import PromptStop, PromptStopped, StopVote, prompt_stop_on
 
         auto, use_mtp, use_dflash = self._drafters(code)
         drafter = self.drafter if use_dflash else None
@@ -605,9 +607,16 @@ class GlmEngine:
             hit.rows, hit.nbytes = None, 0            # live again
         # the caches' rows by id; an image row is no token id, so no kept text prompt matches it
         self.live = list(prompt) if vision is None else [-1 if t == self.image_token else t for t in prompt]
-        first = prefill(self.e, prompt, sampling, mtp=use_mtp, drafter=drafter, resume=hit,
-                        keep_at=max(1, len(prompt) - 1) if draft and vision is None else None, keep=self._remember,
-                        prompt_logprobs=prompt_logprobs, vision=vision)
+        # TF_GLM_PROMPT_STOP: every rank votes after each chunk whether rank 0's client left; all stop after the same
+        if prompt_stop_on():
+            self.e.prompt_stop = PromptStop(self.e.w, cancelled if self.rank == 0 else None)
+        try:
+            first = prefill(self.e, prompt, sampling, mtp=use_mtp, drafter=drafter, resume=hit,
+                            keep_at=max(1, len(prompt) - 1) if draft and vision is None else None, keep=self._remember,
+                            prompt_logprobs=prompt_logprobs, vision=vision)
+        except PromptStopped as cut_short:       # the caches hold the rows before the stop, on every rank
+            self.live = self.live[:self.e.st.pos]
+            return {"prefill_s": time.perf_counter() - t0, "cached": cut, "prompt_stopped": cut_short.at}
         prefill_s = time.perf_counter() - t0
         stats: dict[str, Any] = {"prefill_s": prefill_s, "cached": cut}
         waited = getattr(self.e, "heat_wait", 0.0)
@@ -661,9 +670,11 @@ class GlmEngine:
         return stats
 
     def generate(self, prompt: list[int], max_tokens: int, sampling, on_tokens, draft: bool = True,
-                 constraint=None, prompt_logprobs=None, vision=None) -> dict[str, Any]:
+                 constraint=None, prompt_logprobs=None, vision=None,
+                 cancelled: Callable[[], bool] | None = None) -> dict[str, Any]:
         """Mirror one rank-0 request on the other ranks; draft=False uses serial decoding and fresh prefill as the reference drafted replies must equal.
-        ``prompt_logprobs`` (``PromptProbabilities``) prefills the whole prompt, never from a kept prefix."""
+        ``prompt_logprobs`` (``PromptProbabilities``) prefills the whole prompt, never from a kept prefix. Once
+        ``cancelled()`` holds, the prompt stops after its next chunk on every rank and ``RequestCancelled`` is raised."""
 
         if vision is not None and self.vision is None:
             raise ValueError("image inputs require starting this engine with --vision")
@@ -696,7 +707,11 @@ class GlmEngine:
         if encoded is not None:
             encoded = self._images(encoded, prompt)
         stats = self._run(list(prompt), max_tokens, sampling, stop_eos, on_tokens, code, hit, draft, constraint,
-                          prompt_logprobs, encoded)
+                          prompt_logprobs, encoded, cancelled=cancelled)
+        if stats.get("prompt_stopped"):
+            from tensorfold.server.cancellation import RequestCancelled
+
+            raise RequestCancelled(f"the client left; its prompt stopped after {stats['prompt_stopped']} rows")
         stats.update(policy=spec, drafts=draft)
         return stats
 

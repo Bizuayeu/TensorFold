@@ -493,6 +493,8 @@ class App:
             options["probabilities"] = probabilities
         if takes_stop_eos:
             options["stop_eos"] = not prepared.ignore_eos
+        if cancelled is not None and "cancelled" in inspect.signature(self.engine.generate).parameters:
+            options["cancelled"] = cancelled        # GLM: a prompt whose client left stops after its next chunk
         # TF_GLM_LOOP_GUARD=1: a think block that collapsed into repeating itself is closed (engine/loop_guard.py)
         guarded = chat and thinking and os.environ.get("TF_GLM_LOOP_GUARD", "0") == "1"
         shaped = prepared.grammar is not None or prepared.think_budget > 0 or guarded
