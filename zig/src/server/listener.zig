@@ -8,10 +8,25 @@ const Threaded = std.Io.Threaded;
 /// The run has said once that accepts ran out of descriptors; a successful accept arms it again.
 var nofile_logged = std.atomic.Value(bool).init(false);
 
+/// Tried in turn when the hard open-file limit is unlimited (macOS caps a process below that).
+const nofile_fallbacks = [_]posix.rlim_t{ 65536, 10240 };
+
+/// The soft open-file limit raised to the hard one, so idle connections can't exhaust a container's 1024 (#294).
+pub fn raiseNofile() void {
+    const now = posix.getrlimit(.NOFILE) catch return;
+    const targets: []const posix.rlim_t = if (now.max == posix.RLIM.INFINITY) &nofile_fallbacks else &.{now.max};
+    for (targets) |t| {
+        if (now.cur != posix.RLIM.INFINITY and now.cur >= t) return;
+        posix.setrlimit(.NOFILE, .{ .cur = t, .max = now.max }) catch continue;
+        return;
+    }
+}
+
 pub const Listener = struct {
     fd: posix.socket_t,
 
     pub fn open(address: net.IpAddress) !Listener {
+        raiseNofile();
         var storage: Threaded.PosixAddress = undefined;
         const len = Threaded.addressToPosix(&address, &storage);
         const family: u32 = if (address == .ip4) posix.AF.INET else posix.AF.INET6;
@@ -77,6 +92,17 @@ pub const Listener = struct {
 /// Whether this failure is the burst's first descriptor exhaustion (EMFILE, ENFILE): one log line per burst.
 fn firstNofile(e: posix.E) bool {
     return (e == .MFILE or e == .NFILE) and !nofile_logged.swap(true, .acq_rel);
+}
+
+test "the soft open-file limit is raised to the hard one" {
+    const before = try posix.getrlimit(.NOFILE);
+    defer posix.setrlimit(.NOFILE, before) catch {};
+    if (before.max == posix.RLIM.INFINITY or before.max <= 256) return error.SkipZigTest;
+    try posix.setrlimit(.NOFILE, .{ .cur = 256, .max = before.max });
+    raiseNofile();
+    try std.testing.expectEqual(before.max, (try posix.getrlimit(.NOFILE)).cur);
+    raiseNofile(); // already at the hard limit: nothing changes
+    try std.testing.expectEqual(before.max, (try posix.getrlimit(.NOFILE)).cur);
 }
 
 test "the descriptor log fires once per burst" {
