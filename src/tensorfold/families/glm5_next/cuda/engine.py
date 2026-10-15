@@ -296,8 +296,8 @@ class GlmEngine:
         self.e.heat = self.heat
         if rank == 0 and self.heat is not None:
             c = self.heat.ceiling
-            over, under = ((f" or that plus the last chunk's rise is above {c:g} C",
-                            f" and that plus the rise at or below {c:g} C") if c is not None else ("", ""))
+            over, under = ((f" or that plus a chunk's rise (one run straight after another) is above {c:g} C",
+                            f" and that plus the larger rise at or below {c:g} C") if c is not None else ("", ""))
             print(f"[tensorfold] a prefill waits between chunks while any rank's hottest zone is above "
                   f"{self.heat.high:g} C{over}, until all are at or below {self.heat.low:g} C{under}", flush=True)
         if self.drafter is not None:

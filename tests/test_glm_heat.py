@@ -149,22 +149,58 @@ def test_a_chunk_waits_when_the_last_rise_would_carry_it_past_the_ceiling(zones)
     assert [h.wait(lambda t: t) for _ in range(5)] == [0.0] * 4 + [6.0]
 
 
-def test_the_wait_ends_at_the_ceiling_less_the_rise_and_the_next_rise_counts_from_there(zones, capsys):
-    h = one_rank([80.5, 87.5, 88.0, 86.5, 86.0, 90.0, 87.5, 93.0, 87.4], zones)
+def test_the_wait_ends_at_the_ceiling_less_the_larger_rise(zones, capsys):
+    """A chunk that begins straight after another is judged by such a chunk's rise; a wait ends where the larger of
+    that rise and the one counted from the wait's end stays within CEILING."""
+
+    h = one_rank([79.0, 80.5, 87.5, 88.0, 86.5, 86.0, 90.0, 87.0, 85.9, 93.0, 85.5], zones)
     h.start()
-    # +7 to 87.5 waits for 93 - 7 = 86, not for LOW (88.0 holds); the next chunk starts at 86.0, so 90.0 is a 4 C rise
-    # (not 2.5 from the check at 87.5): it waits for LOW, 89 being above; 93.0 is above HIGH and 5.5 C up: 87.5
-    assert [h.wait(lambda t: t) for _ in range(4)] == [0.0, 6.0, 2.0, 2.0]
+    # 79 first; 80.5 follows the prompt's start (its 1.5 C is not a rise between chunks); +7 to 87.5 waits for
+    # 93 - 7 = 86, not for LOW (88.0 holds). The next chunk begins at 86.0 after the wait, so its 4 C to 90.0 is not
+    # one between chunks: 90.0 plus the 7 C still waits, for 93 - 7 = 86 (the larger rise). 93.0 is above HIGH, 7.1 C
+    # up from 85.9: it waits for 85.9
+    assert [h.wait(lambda t: t) for _ in range(5)] == [0.0, 0.0, 6.0, 4.0, 2.0]
     lines = capsys.readouterr().out.splitlines()
     assert lines == [
-        ("[tensorfold] heat: hottest zone 87.5 C plus the last chunk's 7.0 C rise above 93 C; the prefill waits for "
-         "86 C"),
+        ("[tensorfold] heat: hottest zone 87.5 C plus a chunk's 7.0 C rise, one run straight after another, above "
+         "93 C; the prefill waits for 86 C"),
         "[tensorfold] heat: 86.0 C after 6 s; the prefill goes on",
-        ("[tensorfold] heat: hottest zone 90.0 C plus the last chunk's 4.0 C rise above 93 C; the prefill waits for "
-         "88 C"),
-        "[tensorfold] heat: 87.5 C after 2 s; the prefill goes on",
-        "[tensorfold] heat: hottest zone 93.0 C above 92 C; the prefill waits for 87.5 C",
-        "[tensorfold] heat: 87.4 C after 2 s; the prefill goes on"]
+        ("[tensorfold] heat: hottest zone 90.0 C plus a chunk's 7.0 C rise, one run straight after another, above "
+         "93 C; the prefill waits for 86 C"),
+        "[tensorfold] heat: 85.9 C after 4 s; the prefill goes on",
+        "[tensorfold] heat: hottest zone 93.0 C above 92 C; the prefill waits for 85.9 C",
+        "[tensorfold] heat: 85.5 C after 2 s; the prefill goes on"]
+
+
+def test_a_rise_across_the_gap_before_a_prompt_does_not_count(zones):
+    """2026-10-15, two 38,962-token prompts back to back at 92 / 88 / 93 C: the second began at 81.9 C after the gap
+    between them, its first chunk took the zone back to 87.8 C, and that 5.9 C, counted as a rise, made every later
+    chunk wait (19 waits, 67.0 s against 28.9 s). Between chunks the zone rose under 1 C."""
+
+    h = one_rank([56.0, 70.0, 80.0, 84.0, 86.0, 87.0, 87.4, 81.9, 87.8, 88.1, 88.3], zones)
+    h.start()
+    assert [h.wait(lambda t: t) for _ in range(7)] == [0.0] * 7      # 80.0 + 10, 84.0 + 4, ..., 87.4 + 0.4
+    h.start()
+    assert [h.wait(lambda t: t) for _ in range(4)] == [0.0] * 4      # 87.8 + 0.4 (the last prompt's), 88.1 + 0.3
+
+
+def test_after_a_wait_the_next_chunk_is_judged_by_a_rise_between_chunks(zones):
+    # a 5.9 C rise between chunks waits at 87.8 C for 87.1; the zone reads 69.3 after 2 s. The chunk after the wait
+    # takes it to 85.4 (16.1 C from the wait's end), but the next chunk begins straight after it: 85.4 + 5.9 = 91.3 goes
+    h = one_rank([75.0, 81.9, 87.8, 69.3, 85.4, 86.0], zones)
+    h.start()
+    assert [h.wait(lambda t: t) for _ in range(5)] == [0.0, 0.0, 2.0, 0.0, 0.0]
+
+
+def test_where_each_chunk_must_wait_the_waits_are_as_long_as_before(zones, capsys):
+    """Late in a 1M-token prompt (7 C between chunks): a wait before every chunk, each to CEILING less the rise from
+    the last wait's end, as when every rise was counted from where its chunk began."""
+
+    h = one_rank([74.0, 81.0, 88.0, 75.0, 89.0, 74.0, 88.5, 73.0], zones)
+    h.start()
+    assert [h.wait(lambda t: t) for _ in range(5)] == [0.0, 0.0, 2.0, 2.0, 2.0]
+    floors = [line.rsplit("waits for ", 1)[1] for line in capsys.readouterr().out.splitlines() if "waits for" in line]
+    assert floors == ["86 C", "79 C", "78.5 C"]
 
 
 def test_a_prompt_starts_without_the_last_prompts_rise(zones):
@@ -185,11 +221,12 @@ def test_a_chunk_begun_with_no_zone_read_has_no_rise(zones):
 
 
 def test_every_rank_takes_the_rise_of_the_gathered_maximum(zones):
-    # the hottest rank changes between the checks: 80.6 on rank 1, then 87.6 on rank 2; the gathered rise is 7 C (each
-    # rank's own is -10.6 to 8.6), so every rank waits for 86 C and leaves at 85.5 together
-    out, comm = three_ranks([[70.0, 75.0], [80.6, 70.0], [79.0, 87.6, 87.0, 85.5]], zones, ceiling=93.0, chunks=2)
+    # after the prompt's first chunk the hottest rank changes between the checks: 80.6 on rank 1, then 87.6 on rank 2;
+    # the gathered rise is 7 C (each rank's own is -10.6 to 8.6), so every rank waits for 86 C and leaves at 85.5
+    out, comm = three_ranks([[60.0, 70.0, 75.0], [60.0, 80.6, 70.0], [60.0, 79.0, 87.6, 87.0, 85.5]], zones,
+                            ceiling=93.0, chunks=3)
     assert out == [(4.0, 2)] * 3
-    assert comm.sizes == [[1] * 4] * 3
+    assert comm.sizes == [[1] * 5] * 3
 
 
 def test_one_rank_reads_its_own_zones():

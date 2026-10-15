@@ -169,9 +169,12 @@ stays hot holds the request. On three DGX Sparks a 1,048,576-token prefill took 
 
 `TF_GLM_HEAT_CEILING` (degrees C, above HIGH, set only with the two; unset, off) looks one chunk ahead. Late in a
 1,048,576-token prompt one chunk heats a host by about 7 C, so a check just under HIGH can let through a chunk that
-ends well above it. With a ceiling the prefill also waits while the hottest zone plus the last chunk's rise (from the
-hottest when that chunk began; none before a prompt's first chunk) is above CEILING, and goes on once the hottest is
-at or below both LOW and CEILING less that rise.
+ends well above it. With a ceiling the prefill also waits while the hottest zone plus a chunk's rise is above CEILING,
+and goes on once the hottest is at or below both LOW and CEILING less that rise. The zone drops within seconds when
+the GPU rests and climbs back as fast under load, so the rise that counts is that of a chunk begun straight after
+another (none before a prompt's first chunk; kept across waits and prompts), and a wait ends where the chunk after it,
+which begins from a rest, also stays within CEILING. Counting the climb back after a rest as a rise made a hot second
+prompt wait before each of its chunks: 19 waits and 67.0 s for a 38,962-token prompt that fills in 28.9 s.
 
 Measured on two DGX Sparks (GB10, 128 GB each) with the MLX 4-bit checkpoint, MTP drafts only,
 `--context 262144`, a synthetic codebase with one hidden fact, cold prompts:
