@@ -85,7 +85,7 @@ const engine = struct {
             if (slot >= 32) return error.BadSlot;
             e.cur = &e.seqs[slot];
         }
-        pub fn gate(_: *Engine, _: ?u8) !void {}
+        pub fn gate(_: *Engine, _: ?u8, _: bool) !void {}
         pub fn exchange(_: *Engine) u8 {
             return 0;
         }

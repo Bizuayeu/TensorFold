@@ -36,7 +36,7 @@ pub fn pass(e: anytype, parts: []const engine.Prompt, firsts: []u32, comptime Fo
         @memcpy(ids[rows..][0..p.ids.len], p.ids);
         rows += p.ids.len;
     }
-    try e.gate(null);
+    try e.gate(null, true); // fresh prompts at position 0: the pass carries no rise in
     var one: [1]Rank = .{.{ .w = &e.w, .st = segs[0].st, .b = &e.bp, .segs = segs[0..parts.len] }};
     var f: Forward = .{ .d = e.d, .m = &e.m, .stream = e.stream, .ranks = &one, .exchange = e.exchange(), .pieces = &e.pieces, .split = e.settings.split, .ring = e.settings.ring, .kda_wide = e.settings.kda_wide, .taps = if (e.drafter) |dr| dr.taps(true) else null };
     try f.run(@ptrCast(ids[0..rows]));

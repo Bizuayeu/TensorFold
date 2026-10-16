@@ -168,6 +168,8 @@ The server logs `heat_wait_s`, a cancel ends the wait, and the reply's tokens do
 On three GB10s serving GLM-5.3-Flash NVFP4 at TP=3, a 1,035,295-token prompt without the bands kept one host's hottest
 zone at 94 C or more for most of the prompt (97.7 C at the top); `TF_HEAT_HIGH=92` and `TF_HEAT_LOW=88` held all three
 at 93.0 C or under, and the first token came 10% later.
+For GLM, `TF_HEAT_CEILING` (above the high band, with both) also makes a chunk wait while the hottest zone plus the
+last rise of a chunk run straight after another would pass it, until that rise fits under it and the low band holds.
 Archives whose names contain `host-only` are CPU verification artifacts and cannot serve CUDA inference.
 
 ### GB10 CPU pinning for long CUDA runs

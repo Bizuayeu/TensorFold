@@ -76,7 +76,7 @@ pub const Engine = struct {
     slot: u32 = 0,
     capacity: usize,
     mtp: bool,
-    heat_gate: heat.Gate, // upstream's bands (off unless set), read before each prompt chunk on the gathered maximum
+    heat_gate: heat.Gate, // upstream's bands and ceiling (off unless set), read before each prompt chunk on the gathered maximum
     shared_buf: cuda.DeviceBuffer, // one f64 every rank all-reduces to its maximum
     snaps: std.AutoHashMapUnmanaged(u64, Snap) = .empty, // kept prompt states by id (the same ids on every rank)
     next_snap: u64 = 1, // rank 0: the next id
@@ -295,6 +295,7 @@ pub const Engine = struct {
     /// decode.prefill: `ids` in 2,048-row chunks, then the first token from the last row; `from` restores a kept state.
     pub fn prefill(e: *Engine, ids: []const u32, from: ?Resume, cancel: ?Cancel, marks: ?Marks) !u32 {
         var start = try e.prefillStart(ids.len, from);
+        e.heat_gate.startPrompt(); // its chunks get no `from`: a resumed pass's first is marked here
         while (true) : (start += fw.prefill_rows) {
             if (try e.prefillChunk(ids[start..@min(ids.len, start + fw.prefill_rows + 1)], start, ids.len, null, cancel, marks)) |first| return first;
         }
@@ -324,7 +325,7 @@ pub const Engine = struct {
         const labels = [_][]const u8{ "prompt chunk to 64 rows", "prompt chunk to 256 rows", "prompt chunk to 1024 rows", "prompt chunk to 2048 rows" };
         if (f.prof) |p| try p.begin(e.stream, labels[if (rows <= 64) 0 else if (rows <= 256) 1 else if (rows <= 1024) 2 else 3]);
         defer if (f.prof) |p| p.end();
-        try e.gate(cancel);
+        try e.gate(cancel, start == 0 or from != null);
         if (f.prof) |p| p.mark(e.stream, .gate);
         try f.run(as_i32[0..rows]);
         if (e.prompt_logprobs) |p| if (part.len > 1) try prompt_lp.run(e, p, part[1..]);
@@ -355,11 +356,12 @@ pub const Engine = struct {
     }
 
     /// The chunk gate on every rank: a kept state at the mark, the heat wait, rank 0's cancel; the id exchanged first.
-    pub fn gate(e: *Engine, cancel: ?Cancel) !void {
+    pub fn gate(e: *Engine, cancel: ?Cancel, first: bool) !void {
         const kept = try e.shared(@floatFromInt(e.announce));
         e.announce = 0;
         if (kept > 0 and e.share.rank != 0) try e.keepAs(@intFromFloat(kept));
         if (e.heat_gate.bands != null) {
+            if (first) e.heat_gate.startPrompt(); // a pass's first chunk carries no rise in
             var w: Wait = .{ .e = e, .cancel = cancel };
             const before = e.heat_gate.waited_s;
             e.heat_gate.waitUntil(Wait.read, Wait.sleep, &w, .{ .ptr = &w, .check = Wait.stop }) catch |err| return w.failed orelse err;
