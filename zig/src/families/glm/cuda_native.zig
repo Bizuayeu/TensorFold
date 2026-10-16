@@ -61,6 +61,25 @@ pub fn place() !Place {
     return checked(p);
 }
 
+/// Local: rank 0 writes its unique id to `path` as hex; the others read it there, waiting up to 10 minutes.
+fn idByFile(io: std.Io, path: []const u8, rank: usize, lib: *const cuda.nccl.Library, id: *cuda.nccl.UniqueId) !void {
+    if (rank == 0) {
+        try lib.check(lib.api.ncclGetUniqueId(id), "ncclGetUniqueId");
+        const hex = std.fmt.bytesToHex(id.internal, .lower);
+        return std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = &hex });
+    }
+    var hex: [256]u8 = undefined;
+    for (0..600) |_| {
+        const got = std.Io.Dir.cwd().readFile(io, path, &hex) catch hex[0..0];
+        if (got.len == hex.len) {
+            _ = try std.fmt.hexToBytes(&id.internal, &hex);
+            return;
+        }
+        std.Io.sleep(io, .fromMilliseconds(1000), .awake) catch {};
+    }
+    return error.NoCommId;
+}
+
 /// A place the family serves: a rank inside its world, and at most `ranks.max_world` ranks.
 fn checked(p: Place) !Place {
     if (p.world < 1 or p.rank >= p.world) return error.NoRank;
@@ -95,7 +114,8 @@ const Owned = struct {
 pub fn open(gpa: std.mem.Allocator, io: std.Io, ctx: *const cuda.Context, dir: []const u8, kernels: ?[]const u8, o: Options) !Loaded {
     _ = kernels; // our own kernels: a captured set is not used
     const p = try place();
-    if (p.world > 1 and std.c.getenv("NCCL_COMM_ID") == null) return error.NoCommId;
+    const id_file = std.c.getenv("TF_GLM_NCCL_ID_FILE"); // local: rank 0's id in a file, for a ring of /32 addresses
+    if (p.world > 1 and std.c.getenv("NCCL_COMM_ID") == null and id_file == null) return error.NoCommId;
     var problem: []const u8 = "";
     const set = ranks.Settings.read(&ranks.environment, &problem) catch |err| {
         std.log.err("{s}", .{problem});
@@ -107,7 +127,7 @@ pub fn open(gpa: std.mem.Allocator, io: std.Io, ctx: *const cuda.Context, dir: [
     own.lib = try cuda.nccl.Library.open();
     errdefer own.lib.close();
     var id: cuda.nccl.UniqueId = undefined;
-    try own.lib.check(own.lib.api.ncclGetUniqueId(&id), "ncclGetUniqueId"); // NCCL_COMM_ID: the same id on every rank
+    if (id_file) |f| try idByFile(io, std.mem.span(f), p.rank, &own.lib, &id) else try own.lib.check(own.lib.api.ncclGetUniqueId(&id), "ncclGetUniqueId"); // NCCL_COMM_ID: the same id on every rank
     own.comm = null;
     try own.lib.check(own.lib.api.ncclCommInitRank(&own.comm, @intCast(p.world), id, @intCast(p.rank)), "ncclCommInitRank");
     errdefer _ = own.lib.api.ncclCommDestroy(own.comm);
