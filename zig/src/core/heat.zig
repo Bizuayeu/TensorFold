@@ -1,9 +1,10 @@
-//! Opt-in wait before a prompt chunk when the hottest thermal zone is above a band.
+//! Opt-in wait before a prompt chunk when the hottest thermal zone is above a band or would rise past a ceiling.
 const std = @import("std");
 
 pub const default_root = "/sys/class/thermal";
 
-pub const Bands = struct { high_c: f64, low_c: f64 };
+/// Degrees. `ceiling_c` also waits for a chunk's rise; a family that sets it calls `Gate.startPrompt` at each prompt.
+pub const Bands = struct { high_c: f64, low_c: f64, ceiling_c: ?f64 = null };
 
 /// Asked after each pause: true ends the wait with error.Cancelled (the request was cancelled meanwhile).
 pub const Stop = struct { ptr: *anyopaque, check: *const fn (*anyopaque) bool };
@@ -14,6 +15,12 @@ pub const Gate = struct {
     /// Set after the first unreadable zone, so later chunks skip the read and the log.
     no_zone: bool = false,
     root: []const u8 = default_root,
+    /// The gathered maximum the last chunk began at; null: the next chunk is a prompt's first.
+    began: ?f64 = null,
+    /// The same when that chunk began straight after another; null: after a rest (a wait, or the gap before a prompt).
+    after: ?f64 = null,
+    /// The last rise of a chunk begun straight after another, in degrees: what the ceiling expects of the next.
+    loaded: f64 = 0,
 
     /// TF_HEAT_HIGH and TF_HEAT_LOW in degrees, both or neither (neither: no read); TF_HEAT_ROOT moves the zones.
     pub fn fromEnv() !Gate {
@@ -21,26 +28,55 @@ pub const Gate = struct {
         return .{ .bands = try bandsFrom(envSpan("TF_HEAT_HIGH"), envSpan("TF_HEAT_LOW")), .root = root };
     }
 
+    /// A prompt begins: its first chunk has no rise, and it begins after the gap before the prompt.
+    pub fn startPrompt(g: *Gate) void {
+        g.began = null;
+        g.after = null;
+    }
+
     /// `read` returns the gathered maximum in celsius. `sleep_fn` stands in for the 2 s pause.
     pub fn waitUntil(g: *Gate, read: *const fn (*anyopaque) anyerror!f64, sleep_fn: *const fn (*anyopaque) void, ctx: *anyopaque, stop: ?Stop) !void {
         const bands = g.bands orelse return;
         if (g.no_zone) return;
-        var waiting = false;
-        while (true) {
-            const max_c = read(ctx) catch |err| {
-                if (err == error.NoZone) {
-                    g.no_zone = true;
-                    noteNoZone(g.root);
-                    return;
-                }
-                return err;
-            };
-            if (allow(bands, max_c, waiting)) return;
-            waiting = true;
+        var max_c = (try g.reading(read, ctx)) orelse return;
+        const floor = g.floorFor(bands, max_c) orelse return;
+        while (max_c > floor) {
             sleep_fn(ctx);
             g.waited_s += 2;
             if (stop) |s| if (s.check(s.ptr)) return error.Cancelled;
+            max_c = (try g.reading(read, ctx)) orelse return;
         }
+        g.began = max_c; // the next chunk begins after a rest
+        g.after = null;
+    }
+
+    /// One gathered reading; null once no zone is readable (logged once, and the chunk runs).
+    fn reading(g: *Gate, read: *const fn (*anyopaque) anyerror!f64, ctx: *anyopaque) !?f64 {
+        return read(ctx) catch |err| {
+            if (err != error.NoZone) return err;
+            g.no_zone = true;
+            noteNoZone(g.root);
+            return null;
+        };
+    }
+
+    /// Before a chunk at `top`: null to run now, else the reading its wait lasts until (low, or lower to fit a rise).
+    fn floorFor(g: *Gate, b: Bands, top: f64) ?f64 {
+        const inf = std.math.inf(f64);
+        const rise: f64 = if (g.began) |at| (if (at == -inf) 0 else @max(0, top - at)) else 0;
+        if (g.after) |at| {
+            if (at != -inf and top != -inf) g.loaded = rise; // the last chunk began straight after another
+        }
+        const ahead: f64 = if (g.began == null) 0 else g.loaded;
+        const ceiling = b.ceiling_c orelse inf;
+        if (top <= b.high_c and top + ahead <= ceiling) {
+            g.after = if (g.began == null) null else top;
+            g.began = top;
+            return null;
+        }
+        const floor = @min(b.low_c, ceiling - @max(rise, ahead));
+        noteWait(b, top, ahead, floor);
+        return floor;
     }
 
     /// The real pause, on this process's own hottest zone (`gatheredMax` takes several readings), until `stop` says so.
@@ -75,6 +111,16 @@ pub fn bandsFrom(high: ?[]const u8, low: ?[]const u8) !?Bands {
     return bands;
 }
 
+/// TF_HEAT_CEILING's text on `bands`: in degrees, above the high band, and only with the bands.
+pub fn ceilingFrom(bands: ?Bands, text: ?[]const u8) !?Bands {
+    const t = text orelse return bands;
+    var b = bands orelse return error.HeatBands;
+    const c = try degrees(t);
+    if (c <= b.high_c) return error.HeatBands;
+    b.ceiling_c = c;
+    return b;
+}
+
 pub fn degrees(text: []const u8) !f64 {
     return std.fmt.parseFloat(f64, std.mem.trim(u8, text, " \t\r\n"));
 }
@@ -83,12 +129,6 @@ pub fn degrees(text: []const u8) !f64 {
 pub fn zoneCelsius(text: []const u8) !f64 {
     const milli = try std.fmt.parseInt(i64, std.mem.trim(u8, text, " \t\r\n"), 10);
     return @as(f64, @floatFromInt(milli)) / 1000.0;
-}
-
-/// Run when idle and at or under high, or when already waiting and at or under low.
-pub fn allow(bands: Bands, max_c: f64, waiting: bool) bool {
-    if (waiting) return max_c <= bands.low_c;
-    return max_c <= bands.high_c;
 }
 
 pub fn gatheredMax(xs: []const f64) f64 {
@@ -117,6 +157,16 @@ pub fn hottest(io: std.Io, dir: std.Io.Dir) !f64 {
 pub fn note(seconds_: f64) void {
     if (@import("builtin").is_test) return;
     std.log.info("heat_wait_s {d:.1}", .{seconds_});
+}
+
+/// Why a chunk waits, at the wait's start: above the high band, or its expected rise past the ceiling.
+fn noteWait(b: Bands, top: f64, ahead: f64, floor: f64) void {
+    if (@import("builtin").is_test) return;
+    if (top > b.high_c) {
+        std.log.info("heat: hottest zone {d:.1} C above {d} C; the prefill waits for {d:.1} C", .{ top, b.high_c, floor });
+    } else {
+        std.log.info("heat: hottest zone {d:.1} C plus a chunk's {d:.1} C rise, one run straight after another, above {d} C; the prefill waits for {d:.1} C", .{ top, ahead, b.ceiling_c orelse 0, floor });
+    }
 }
 
 /// Test builds count the warning. A real process logs it.
@@ -148,10 +198,9 @@ test "bands parse as degrees and a lone value is refused" {
 
 test "the chunk runs under the high band, and a hot reading waits until the low band" {
     const bands = Bands{ .high_c = 92, .low_c = 88 };
-    try std.testing.expect(allow(bands, 92, false));
-    try std.testing.expect(!allow(bands, 92.5, false));
-    try std.testing.expect(!allow(bands, 90, true));
-    try std.testing.expect(allow(bands, 88, true));
+    var at = Gate{ .bands = bands };
+    try std.testing.expectEqual(@as(?f64, null), at.floorFor(bands, 92)); // at the high band the chunk runs
+    try std.testing.expectEqual(@as(?f64, 88), at.floorFor(bands, 92.5)); // above it, a wait until the low band
     try std.testing.expectEqual(@as(f64, 94), gatheredMax(&.{ 80, 94, 91 }));
     const Script = struct {
         temps: []const f64,
@@ -192,6 +241,52 @@ test "the chunk runs under the high band, and a hot reading waits until the low 
     var hot_gate = Gate{ .bands = bands };
     try std.testing.expectError(error.Cancelled, hot_gate.waitUntil(Script.read, Script.sleep, &stuck, .{ .ptr = &stuck, .check = Cancelled.yes }));
     try std.testing.expectEqual(@as(u32, 1), stuck.sleeps); // a cancel ends the wait after the pause it came in
+}
+
+/// A gate's gathered maxima, one a read (the last repeats), and the pauses taken.
+const Readings = struct {
+    temps: []const f64,
+    i: usize = 0,
+    sleeps: u32 = 0,
+    fn read(ptr: *anyopaque) !f64 {
+        const r: *Readings = @ptrCast(@alignCast(ptr));
+        const t = r.temps[r.i];
+        if (r.i + 1 < r.temps.len) r.i += 1;
+        return t;
+    }
+    fn sleep(ptr: *anyopaque) void {
+        @as(*Readings, @ptrCast(@alignCast(ptr))).sleeps += 1;
+    }
+    /// One chunk's gate over `temps`: the pauses it took.
+    fn chunk(g: *Gate, temps: []const f64) !u32 {
+        var r = Readings{ .temps = temps };
+        try g.waitUntil(read, sleep, &r, null);
+        return r.sleeps;
+    }
+};
+
+test "a ceiling comes with both bands and above the high one" {
+    const b = Bands{ .high_c = 92, .low_c = 88 };
+    try std.testing.expect((try ceilingFrom(null, null)) == null);
+    try std.testing.expectEqual(b, (try ceilingFrom(b, null)).?);
+    try std.testing.expectEqual(@as(?f64, 93), (try ceilingFrom(b, " 93\n")).?.ceiling_c);
+    try std.testing.expectError(error.HeatBands, ceilingFrom(null, "93"));
+    try std.testing.expectError(error.HeatBands, ceilingFrom(b, "92"));
+}
+
+test "with a ceiling, a chunk begun straight after another waits until the last such rise fits under it" {
+    var g = Gate{ .bands = .{ .high_c = 92, .low_c = 88, .ceiling_c = 93 } };
+    g.startPrompt();
+    try std.testing.expectEqual(@as(u32, 0), try Readings.chunk(&g, &.{70})); // a prompt's first chunk: no rise
+    try std.testing.expectEqual(@as(u32, 0), try Readings.chunk(&g, &.{80})); // chunk 1 began after the gap: not kept
+    try std.testing.expectEqual(@as(u32, 2), try Readings.chunk(&g, &.{ 90, 86, 83 })); // 90 + 10 > 93: wait to 83
+    try std.testing.expectEqual(@as(u32, 2), try Readings.chunk(&g, &.{ 91, 84, 83 })); // its own 8 C, but 10 C counts
+    try std.testing.expectEqual(@as(f64, 8), g.waited_s);
+    g.startPrompt();
+    try std.testing.expectEqual(@as(u32, 0), try Readings.chunk(&g, &.{ 90, 70 })); // a new prompt's first takes none
+    var bands = Gate{ .bands = .{ .high_c = 92, .low_c = 88 } }; // the same readings with the bands alone
+    bands.startPrompt();
+    for ([_]f64{ 70, 80, 90 }) |t| try std.testing.expectEqual(@as(u32, 0), try Readings.chunk(&bands, &.{t}));
 }
 
 extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: i32) i32;

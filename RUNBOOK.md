@@ -157,6 +157,8 @@ budget free for the next states.
 `TF_HEAT_HIGH` and `TF_HEAT_LOW`, in degrees Celsius and set together, make each prompt chunk wait while the hottest
 thermal zone (under `/sys/class/thermal`, or `TF_HEAT_ROOT`) is above the high band, until it is at or under the low one.
 The server logs `heat_wait_s`, a cancel ends the wait, and the reply's tokens do not change.
+For GLM, `TF_HEAT_CEILING` (above the high band, with both) also makes a chunk wait while the hottest zone plus the
+last rise of a chunk run straight after another would pass it, until that rise fits under it and the low band holds.
 Archives whose names contain `host-only` are CPU verification artifacts and cannot serve CUDA inference.
 
 ## Flash Next and paired Metal serving

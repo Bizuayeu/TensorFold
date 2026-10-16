@@ -10,7 +10,7 @@ pub const Settings = struct {
     split: bool = true, // TF_GLM_PREFILL_REDUCE: split (each rank glues its own rows) or gather
     kda_wide: bool = true, // TF_GLM_KDA_DECODE_WIDE: 1 (decode windows on KDA's three-kernel chain) or 0
     pieces: u32 = 3, // TF_GLM_OVERLAP_PIECES: a prompt chunk's exchanges in this many row pieces (1: whole).
-    heat: ?heat.Bands = null, // TF_HEAT_HIGH and TF_HEAT_LOW (upstream's names): a prompt chunk waits on every rank's hottest zone
+    heat: ?heat.Bands = null, // TF_HEAT_HIGH, TF_HEAT_LOW (and TF_HEAT_CEILING): a prompt chunk waits on every rank's hottest zone
     layers: u32 = 0, // TF_GLM_LAYERS: the first this many layers only, a thin model for one-GPU checks (0: all)
 
     /// The settings `get` (an environment lookup) gives; `problem` names a value that is not one of the choices.
@@ -42,8 +42,12 @@ pub const Settings = struct {
                 return error.BadSetting;
             }
         }
-        s.heat = heat.bandsFrom(get("TF_HEAT_HIGH"), get("TF_HEAT_LOW")) catch {
+        const bands = heat.bandsFrom(get("TF_HEAT_HIGH"), get("TF_HEAT_LOW")) catch {
             problem.* = "TF_HEAT_HIGH and TF_HEAT_LOW: both or neither, in degrees, with low at or under high";
+            return error.BadSetting;
+        };
+        s.heat = heat.ceilingFrom(bands, get("TF_HEAT_CEILING")) catch {
+            problem.* = "TF_HEAT_CEILING: degrees above TF_HEAT_HIGH, with both bands";
             return error.BadSetting;
         };
         return s;
@@ -60,7 +64,7 @@ pub fn environment(name: [:0]const u8) ?[]const u8 {
 
 /// What every rank must agree on, as bytes the communicator carries.
 pub const Fingerprint = extern struct {
-    layout: u32 = 5, // this struct's version
+    layout: u32 = 6, // this struct's version
     world: u32,
     rank: u32,
     split: u32,
@@ -71,6 +75,7 @@ pub const Fingerprint = extern struct {
     capacity: u64, // tokens a sequence holds
     heat_high: f64, // the heat bands in degrees (0 and 0: off): every rank must wait alike
     heat_low: f64,
+    heat_ceiling: f64, // TF_HEAT_CEILING (0: none)
     config: [32]u8, // sha256 of config.json
     program: [32]u8, // sha256 of this executable
     checkpoint: [64]u8, // the checkpoint folder's last name (the snapshot's revision), zero padded
@@ -87,6 +92,7 @@ pub const Fingerprint = extern struct {
         capacity,
         heat_high,
         heat_low,
+        heat_ceiling,
         config,
         program,
         checkpoint,
@@ -113,6 +119,7 @@ pub const Fingerprint = extern struct {
             .capacity = capacity,
             .heat_high = if (s.heat) |b| b.high_c else 0,
             .heat_low = if (s.heat) |b| b.low_c else 0,
+            .heat_ceiling = if (s.heat) |b| b.ceiling_c orelse 0 else 0,
             .config = config,
             .program = program,
             .checkpoint = @splat(0),
@@ -141,6 +148,7 @@ pub fn mismatch(all: []const Fingerprint) ?Mismatch {
             "capacity",
             "heat_high",
             "heat_low",
+            "heat_ceiling",
             "config",
             "program",
             "checkpoint",
@@ -216,6 +224,7 @@ fn explain(f: Fingerprint.Field) []const u8 {
         .capacity => "the sequence capacity (the context)",
         .heat_high => "TF_HEAT_HIGH",
         .heat_low => "TF_HEAT_LOW",
+        .heat_ceiling => "TF_HEAT_CEILING",
         .config => "config.json",
         .program => "the executable",
         .checkpoint => "the checkpoint's snapshot folder",
@@ -227,6 +236,7 @@ fn fake(name: [:0]const u8) ?[]const u8 {
     if (std.mem.eql(u8, name, "TF_GLM_OVERLAP_PIECES")) return "2";
     if (std.mem.eql(u8, name, "TF_HEAT_HIGH")) return "92";
     if (std.mem.eql(u8, name, "TF_HEAT_LOW")) return "88";
+    if (std.mem.eql(u8, name, "TF_HEAT_CEILING")) return "93";
     return null;
 }
 
@@ -235,12 +245,20 @@ fn bad(name: [:0]const u8) ?[]const u8 {
     return null;
 }
 
+fn lowCeiling(name: [:0]const u8) ?[]const u8 {
+    if (std.mem.eql(u8, name, "TF_HEAT_CEILING")) return "92";
+    return fake(name);
+}
+
 test "settings from the environment: the defaults, the choices, and a refusal naming a bad value" {
     var problem: []const u8 = "";
     const s = try Settings.read(&fake, &problem);
     try std.testing.expect(!s.split and s.kda_wide and s.pieces == 2 and s.heat.?.high_c == 92 and s.heat.?.low_c == 88);
+    try std.testing.expectEqual(@as(?f64, 93), s.heat.?.ceiling_c);
     try std.testing.expectError(error.BadSetting, Settings.read(&bad, &problem));
     try std.testing.expectEqualStrings("TF_GLM_PREFILL_REDUCE: split or gather", problem);
+    try std.testing.expectError(error.BadSetting, Settings.read(&lowCeiling, &problem));
+    try std.testing.expectEqualStrings("TF_HEAT_CEILING: degrees above TF_HEAT_HIGH, with both bands", problem);
 }
 
 test "fingerprints: agreeing ranks pass; the first differing field and rank are named" {
@@ -264,4 +282,8 @@ test "fingerprints: agreeing ranks pass; the first differing field and rank are 
     try std.testing.expectEqual(Fingerprint.Field.checkpoint, mismatch(&all).?.field);
     all[1] = Fingerprint.of(2, 1, .{}, 8192, false, h0, h0, "/hub/snapshots/423acf37"); // --no-drafts on rank 1 only
     try std.testing.expectEqual(Mismatch{ .field = .mtp, .rank = 1 }, mismatch(&all).?);
+    const ceiling_on: Settings = .{ .heat = .{ .high_c = 92, .low_c = 88, .ceiling_c = 93 } };
+    all[0] = Fingerprint.of(2, 0, heat_on, 8192, true, h0, h0, "/hub/snapshots/423acf37");
+    all[1] = Fingerprint.of(2, 1, ceiling_on, 8192, true, h0, h0, "/hub/snapshots/423acf37");
+    try std.testing.expectEqual(Fingerprint.Field.heat_ceiling, mismatch(&all).?.field);
 }
