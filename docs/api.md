@@ -265,10 +265,12 @@ macOS arm64, Linux x86_64 and Linux aarch64; from source, `zig build grammar -Dx
 v0.2.8 checkout (`git clone --branch v0.2.8 --recurse-submodules https://github.com/mlc-ai/xgrammar`) into
 `zig-out/native/lib` on macOS and `zig-out/lib` on Linux. The server looks in `../lib` beside its binary, then beside
 it, then on the loader's path, and loads it at the first structured request; without it, everything else serves and a
-structured request gets HTTP 400. Nemotron (Metal and CUDA) and Qwen3.5-2B (Metal) enforce it; other native engines
-answer a structured request with HTTP 400. Drafting stays on: the drafts the head holds on the GPU come back to the host
-before each verify, the grammar cuts the ones it rejects and drafts the text it forces itself (a key, closing markup),
-and each row's logits are masked before its draw, so drafted, `"draft": false` and concurrent replies are the same.
+structured request gets HTTP 400. Nemotron (Metal and CUDA), GLM-5.3-Flash (CUDA) and Qwen3.5-2B (Metal) enforce it;
+other native engines answer a structured request with HTTP 400. Drafting stays on: the drafts the head holds on the GPU
+come back to the host before each verify, the grammar cuts the ones it rejects and drafts the text it forces itself (a
+key, closing markup), and each row's logits are masked before its draw, so drafted, `"draft": false` and concurrent
+replies are the same. GLM's ranks gather each constrained draw's rows whole, and rank 0, which holds the grammar, masks
+them.
 
 On the native server, `tool_choice: "required"` and a named function are a grammar too, on the engines above: the answer
 is one or more calls in the chat template's own markup (`<tool_call>`, with Qwen3-Coder XML parameters as Nemotron and
