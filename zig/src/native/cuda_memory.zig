@@ -3,10 +3,36 @@ const cuda = @import("cuda");
 const std = @import("std");
 const gib: f64 = 1 << 30;
 
-/// The bytes of the checkpoint's safetensors files: what its weights need on the device, near enough to refuse early.
-pub fn weightBytes(io: std.Io, dir: []const u8) u64 {
+/// Bytes of the checkpoint's safetensors (the weight map's files, else the folder's own), near enough to refuse early.
+pub fn weightBytes(gpa: std.mem.Allocator, io: std.Io, dir: []const u8) u64 {
     var d = std.Io.Dir.cwd().openDir(io, dir, .{ .iterate = true }) catch return 0;
     defer d.close(io);
+    return mapped(gpa, io, d) catch listed(io, d);
+}
+
+/// The files model.safetensors.index.json's weight map names, each once.
+fn mapped(gpa: std.mem.Allocator, io: std.Io, d: std.Io.Dir) !u64 {
+    const text = try d.readFileAlloc(io, "model.safetensors.index.json", gpa, .limited(1 << 26));
+    defer gpa.free(text);
+    const parsed = try std.json.parseFromSlice(std.json.Value, gpa, text, .{});
+    defer parsed.deinit();
+    const map = if (parsed.value == .object) parsed.value.object.get("weight_map") else null;
+    if (map == null or map.? != .object) return error.NoWeightMap;
+    var seen: std.StringHashMapUnmanaged(void) = .empty;
+    defer seen.deinit(gpa);
+    var total: u64 = 0;
+    var it = map.?.object.iterator();
+    while (it.next()) |e| {
+        if (e.value_ptr.* != .string) return error.NoWeightMap;
+        if ((try seen.getOrPut(gpa, e.value_ptr.string)).found_existing) continue;
+        const st = d.statFile(io, e.value_ptr.string, .{}) catch continue;
+        total += st.size;
+    }
+    return total;
+}
+
+/// The folder's own *.safetensors, for a checkpoint without an index.
+fn listed(io: std.Io, d: std.Io.Dir) u64 {
     var total: u64 = 0;
     var it = d.iterate();
     while (it.next(io) catch null) |e| {
@@ -236,4 +262,24 @@ pub fn readPool(a: std.mem.Allocator, io: std.Io, ctx: *const cuda.Context, prob
         return null;
     };
     return .{ .free = available.available, .total = available.total, .reserve = reserve, .limit = limit, .unified = unified };
+}
+
+test "the weights' bytes: each file the weight map names once, under a folder too; without an index the folder's own" {
+    const a = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "tensors");
+    try tmp.dir.writeFile(io, .{ .sub_path = "model-00001-of-00001.safetensors", .data = &@as([10]u8, @splat('w')) });
+    try tmp.dir.writeFile(io, .{ .sub_path = "tensors/native-QB.safetensors", .data = &@as([7]u8, @splat('q')) });
+    try tmp.dir.writeFile(io, .{ .sub_path = "stray.safetensors", .data = &@as([100]u8, @splat('s')) });
+    var path: [64]u8 = undefined;
+    const dir = try std.fmt.bufPrint(&path, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    try std.testing.expectEqual(@as(u64, 110), weightBytes(a, io, dir)); // no index: model and stray, not tensors/
+    try tmp.dir.writeFile(io, .{ .sub_path = "model.safetensors.index.json", .data =
+        \\{"weight_map":{"a":"model-00001-of-00001.safetensors","b":"tensors/native-QB.safetensors","c":"model-00001-of-00001.safetensors"}}
+    });
+    try std.testing.expectEqual(@as(u64, 17), weightBytes(a, io, dir));
+    try tmp.dir.writeFile(io, .{ .sub_path = "model.safetensors.index.json", .data = "[]" }); // no weight map: the folder's own
+    try std.testing.expectEqual(@as(u64, 110), weightBytes(a, io, dir));
 }

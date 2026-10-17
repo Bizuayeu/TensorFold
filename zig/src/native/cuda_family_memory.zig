@@ -43,7 +43,7 @@ pub fn weights(comptime F: type, a: Allocator, io: std.Io, o: api.Open, problem:
     const whole = if (@hasDecl(F, "tensorWeightBytes")) F.tensorWeightBytes(a, io, o.dir, o.vision != null) catch |err| {
         problem.* = try std.fmt.allocPrint(a, "cannot read checkpoint tensor sizes ({s})", .{@errorName(err)});
         return null;
-    } else budget.weightBytes(io, o.dir);
+    } else budget.weightBytes(a, io, o.dir);
     const text = if (@hasDecl(F, "placementWeightBytes")) try F.placementWeightBytes(a, io, o.dir, o.tp, o.rank, o.drafts) else if (@hasDecl(F, "weightShare")) F.weightShare(a, io, o.dir, whole) else whole;
     return text + try @import("cuda_vision_offer.zig").weightBytes(F, a, io, o);
 }
