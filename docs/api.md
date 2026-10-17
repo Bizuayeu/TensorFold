@@ -274,9 +274,9 @@ them.
 
 On the native server, `tool_choice: "required"` and a named function are a grammar too, on the engines above: the answer
 is one or more calls in the chat template's own markup (`<tool_call>`, with Qwen3-Coder XML parameters as Nemotron and
-Qwen3.5 write them, or a JSON object), each call to an offered tool (the named one only) with its arguments inside the
-tool's parameter schema; blank lines may come between calls, prose may not. `parallel_tool_calls: false` allows exactly
-one call. With thinking on, the grammar starts after the think end.
+Qwen3.5 write them, GLM's `<arg_key>` and `<arg_value>` tags, or a JSON object), each call to an offered tool (the
+named one only) with its arguments inside the tool's parameter schema; blank lines may come between calls, prose may
+not. `parallel_tool_calls: false` allows exactly one call. With thinking on, the grammar starts after the think end.
 
 HTTP 400 comes before any token for a malformed field, a grammar xgrammar cannot compile (with xgrammar's reason), a
 server without xgrammar (with the install command; on the native server, a server that cannot load `libtfgrammar`),
