@@ -1,8 +1,8 @@
-"""X9's live checks (HANDOVER_20261018_S5 §3 step 3): structured output from GLM's CUDA lanes on a running TP server.
-Copied from records/20261018-g1 (<session>) for FP4_LOCAL_PLAN §9's S9 on 1.1.1 (FP4-Local and NVFP4, in fp4l-tf3):
+"""X9's live checks (<plan>): structured output from GLM's CUDA lanes on a running TP server.
+Copied from <records> (<session>) for <plan>'s S9 on 1.1.1 (FP4-Local and NVFP4, in <container>):
 PLAIN_SHA from the environment, else this run's first plain reply.
 
-Run in the glm53-tf3 container on rank 0's host: python3 x9_live.py OUT.jsonl [--concurrent] [--mixed4] [--cold-first].
+Run in the <container> container on rank 0's host: python3 x9_live.py OUT.jsonl [--concurrent] [--mixed4] [--cold-first].
 One JSON line a check in OUT, a summary on stdout; exit 1 when a check fails. The last line (check "_greedy") holds
 every greedy reply's text, token_sha and calls, for `compare`.
 - schema: a json_schema reply parses and has the schema's keys and types (thinking off, then on)
@@ -12,7 +12,7 @@ every greedy reply's text, token_sha and calls, for `compare`.
 - tool-required: tool_choice "required" gives a call with arguments that parse and name the city
 - plain: a request without a grammar keeps PLAIN_SHA (unset: this run's first plain reply, the later ones against it)
 - --concurrent (PARALLEL 2): the plain request beside a schema request keeps its sha, the schema reply its solo text
-<session>'s specs of 10-18 (records/20261018-g1/reply-1017.md, reply-1018.md):
+<session>'s specs of 10-18 (<records>/reply-1017.md, reply-1018.md):
 - nested (#1017): an array of objects with an enum parses and meets the schema
 - resume (#1017): (a) a new schema request twice: the same text, the second from the cache; (b) a new text's plain
   chat, then its schema request, which resumes from the plain one's cache (`compare` holds it to the text the same
@@ -35,9 +35,9 @@ import time
 import urllib.request
 
 URL = "http://127.0.0.1:8095"
-MODEL = os.environ.get("MODEL", "local-model")  # the served name: S5's runs used local-model, S6 serve.sh's glm-tf
+MODEL = os.environ.get("MODEL", "local-model")  # the served name: S5's runs used local-model, <fork>'s serve script's glm-tf
 TOK = "/hub/models--nvidia--GLM-5.3-Flash-NVFP4/snapshots/423acf37583782c51c142d145aef733d72943d93/tokenizer.json"
-PLAIN_SHA = os.environ.get("PLAIN_SHA")  # 3.x's NVFP4 gave 09a15f0582e7 (glm53-tf3:3x-0a380fa, TP=2 and TP=3)
+PLAIN_SHA = os.environ.get("PLAIN_SHA")  # <fork>'s NVFP4 gave 09a15f0582e7 (<image>, TP=2 and TP=3)
 CITY = {
     "type": "object",
     "properties": {"name": {"type": "string"}, "population": {"type": "integer"}},
