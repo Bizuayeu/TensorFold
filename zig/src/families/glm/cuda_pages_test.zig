@@ -177,6 +177,22 @@ test "TF_KV_PAGES=all: a stream past the paged sequences waits for one, and its 
     try expectEqual(@as(u32, 1), f.e.slot);
 }
 
+test "TF_KV_PAGES=all: the lane host admits a request by the pool alone, though the engine's own sequence is free" {
+    var f: Fake = undefined;
+    try f.init(std.testing.allocator);
+    const l = try pages_mod.layout(std.testing.allocator, &f.e, 0);
+    const p = try pages_mod.Pages.init(std.testing.allocator, &f.e, l, 2, 8, true);
+    defer f.deinit(p);
+    f.e.pages = p;
+    var ln: Lanes = .{ .x = .{ .e = &f.e, .link = undefined }, .paged_only = true };
+    defer ln.lanes.deinit(f.e.gpa);
+    try expect(ln.fits(3000, 100)); // 7 of the 8 pages
+    var stream: lanes.Stream = undefined;
+    _ = try ln.seat(&stream, 2000, 100); // slot 1: 5 pages
+    try expect(!ln.fits(3000, 100)); // the engine's own sequence is idle, but only 3 pages are free
+    try expect(ln.fits(1000, 100));
+}
+
 test "TF_KV_POISON: every page a stream takes is filled with NaN before its rows are written" {
     var f: Fake = undefined;
     try f.init(std.testing.allocator);
