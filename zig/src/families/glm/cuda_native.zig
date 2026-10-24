@@ -106,13 +106,12 @@ const Owned = struct {
 extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
 extern "c" fn unsetenv(name: [*:0]const u8) c_int;
 
-/// Local, not for upstream (TP=3 on the ring's /32 until #636): with TF_GLM_NCCL_ID_FILE, NCCL_COMM_ID names only the
-/// ranks' lines; it leaves NCCL's environment, whose bootstrap looks for an interface in that address's subnet.
+/// Local (TP=3 on /32 links until #1178): with TF_GLM_NCCL_ID_FILE, NCCL_COMM_ID names only the ranks' lines.
 fn commIdByFile(rank: usize) ?[]const u8 {
     const f = std.mem.span(std.c.getenv("TF_GLM_NCCL_ID_FILE") orelse return null);
     const was = std.mem.span(std.c.getenv("NCCL_COMM_ID") orelse "");
     std.log.info("rank {d}: TF_GLM_NCCL_ID_FILE {s}; NCCL_COMM_ID {s} leaves NCCL's environment", .{ rank, f, was });
-    _ = unsetenv("NCCL_COMM_ID");
+    _ = unsetenv("NCCL_COMM_ID"); // NCCL's bootstrap would look for an interface in that address's subnet
     return f;
 }
 
