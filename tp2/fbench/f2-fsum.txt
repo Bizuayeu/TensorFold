@@ -1,0 +1,26 @@
+figure (gate: *)                              fm2a       fm2b       fm2c       fh2a       fh2b
+  cold 2048 s                                1.334      1.345      1.354      1.335      1.351  loss -0.10% range 1.49% within
+  cold 8192 s                                5.725      5.739      5.813      5.728      5.723  loss -0.59% range 1.53% faster
+* cold 9600 s (mean of two)                  7.031      6.791       6.73      6.994      6.801  loss +0.69% range 4.39% within
+  cold 32768 s                              22.898     22.466     22.571     22.675     22.387  loss -0.50% range 1.91% within
+* cold 38400 s (mean of two)                26.386      26.46     26.186     26.406     26.187  loss -0.18% range 1.04% within
+  cold 65536 s                              45.548     44.743     44.982     45.062     44.807  loss -0.35% range 1.79% within
+  openai fibonacci-raw t=1.0 tok/s          42.437      43.19     42.331     42.435     42.389  loss +0.56% range 2.01% within
+  openai gpu-chat-no-think t=1.0 tok/s      35.733     35.989     35.727     35.817     35.535  loss +0.39% range 0.73% open
+  openai fibonacci-raw t=0.0 tok/s          44.918     44.987     44.997     44.971      45.06  loss -0.11% range 0.18% faster
+  openai gpu-chat-no-think t=0.0 tok/s      36.617     36.673     36.664     36.752     36.818  loss -0.36% range 0.15% faster
+* decode x1 per stream tok/s                  48.5       48.6       48.4       48.4       48.5  loss +0.10% range 0.41% within
+* decode x4 per stream tok/s                  17.4       17.7       17.6       17.6       17.8  loss -0.76% range 1.71% faster
+* decode x4 aggregate tok/s                   67.9       68.4       68.2       67.9       68.4  loss +0.02% range 0.73% within
+  edit x1 per stream tok/s                    75.2       75.1       75.2       71.8       75.3  loss +2.15% range 0.13% slower
+  edit x4 per stream tok/s                    22.8       22.6       22.6       22.6       22.6  loss +0.29% range 0.88% within
+  edit x4 aggregate tok/s                     75.2       78.1       77.5       76.9       77.1  loss -0.09% range 3.77% within
+exactness: every cell, greedy row and cold prompt holds
+note: openai fibonacci-raw t=1.0: the arms' token_sha agree
+note: openai gpu-chat-no-think t=1.0: the arms' token_sha agree
+memory fm2a     model 91.07 GiB, 4 streams, 2097 pages (13.06 GiB), 340 MiB fixed, 16.9 GiB left, kept 16, loaded in 51.7 s
+memory fm2b     model 91.07 GiB, 4 streams, 2121 pages (13.2 GiB), 340 MiB fixed, 17.0 GiB left, kept 16, loaded in 51.8 s
+memory fm2c     model 91.07 GiB, 4 streams, 2102 pages (13.09 GiB), 340 MiB fixed, 16.9 GiB left, kept 16, loaded in 51.6 s
+memory fh2a     model 91.07 GiB, 4 streams, 2120 pages (13.2 GiB), 340 MiB fixed, 17.0 GiB left, kept 16, loaded in 51.3 s
+memory fh2b     model 91.07 GiB, 4 streams, 2124 pages (13.22 GiB), 340 MiB fixed, 17.0 GiB left, kept 16, loaded in 54.6 s
+fsum: 0 slower gate figures, 1 slower receipt figures, 0 exactness failures, 16 figures

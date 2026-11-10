@@ -1,0 +1,26 @@
+2026-11-10 10:59:42 == grid4k km4b begin: grid.py ac167c3342d4f43f
+2026-11-10 10:59:42 == grid km4b begin: levels [1, 4, 8], contexts [4096], 256 tokens, 6 reps, client ac167c3342d4f43f
+2026-11-10 10:59:42   token list 54c6382bf88d70ba: 1578844 tokens
+2026-11-10 10:59:45   prefix 4096: 2.4 s, prompt 4097, cached 0, gpu 54, 2190, 43.90
+2026-11-10 11:00:22   4096 x1 rep 1: round 27.545 ms p95 28.418 (gaps 255, window 7.1 s), ttft max 0.114 s, cached [4096], chunks a token 1.00, replies 1, gpu 46, 2190, 8.51
+2026-11-10 11:00:39   4096 x1 rep 2: round 27.609 ms p95 28.818 (gaps 255, window 7.1 s), ttft max 0.116 s, cached [4096], chunks a token 1.00, replies 1, gpu 47, 2190, 8.51
+2026-11-10 11:00:57   4096 x1 rep 3: round 27.850 ms p95 32.926 (gaps 255, window 7.2 s), ttft max 0.116 s, cached [4096], chunks a token 1.00, replies 1, gpu 47, 2190, 8.55
+2026-11-10 11:01:14   4096 x1 rep 4: round 27.949 ms p95 35.271 (gaps 255, window 7.3 s), ttft max 0.116 s, cached [4096], chunks a token 1.00, replies 1, gpu 47, 2190, 8.58
+2026-11-10 11:01:31   4096 x1 rep 5: round 27.867 ms p95 34.452 (gaps 255, window 7.2 s), ttft max 0.117 s, cached [4096], chunks a token 1.00, replies 1, gpu 48, 2190, 8.60
+2026-11-10 11:01:49   4096 x1 rep 6: round 28.034 ms p95 35.054 (gaps 255, window 7.4 s), ttft max 0.115 s, cached [4096], chunks a token 1.00, replies 1, gpu 48, 2190, 8.64
+2026-11-10 11:01:59   cell 4096 x1: 27.859 ms
+2026-11-10 11:02:42   4096 x4 rep 1: round 46.718 ms p95 51.479 (gaps 995, window 11.8 s), ttft max 0.677 s, cached [4096, 4096, 4096, 4096], chunks a token 1.00, replies 4, gpu 46, 2190, 8.53
+2026-11-10 11:03:04   4096 x4 rep 2: round 46.687 ms p95 48.219 (gaps 996, window 11.8 s), ttft max 0.677 s, cached [4096, 4096, 4096, 4096], chunks a token 1.00, replies 4, gpu 48, 2190, 8.63
+2026-11-10 11:03:27   4096 x4 rep 3: round 46.669 ms p95 48.489 (gaps 994, window 11.8 s), ttft max 0.680 s, cached [4096, 4096, 4096, 4096], chunks a token 1.00, replies 4, gpu 49, 2190, 8.69
+2026-11-10 11:03:49   4096 x4 rep 4: round 46.713 ms p95 48.110 (gaps 994, window 11.7 s), ttft max 0.683 s, cached [4096, 4096, 4096, 4096], chunks a token 1.00, replies 4, gpu 49, 2190, 8.69
+2026-11-10 11:04:12   4096 x4 rep 5: round 46.705 ms p95 48.422 (gaps 994, window 11.7 s), ttft max 0.680 s, cached [4096, 4096, 4096, 4096], chunks a token 1.00, replies 4, gpu 49, 2190, 8.71
+2026-11-10 11:04:35   4096 x4 rep 6: round 46.721 ms p95 48.316 (gaps 995, window 11.8 s), ttft max 0.674 s, cached [4096, 4096, 4096, 4096], chunks a token 1.00, replies 4, gpu 50, 2190, 8.79
+2026-11-10 11:04:45   cell 4096 x4: 46.709 ms
+2026-11-10 11:05:35   4096 x8 rep 1: round 72.865 ms p95 74.844 (gaps 1938, window 17.8 s), ttft max 1.474 s, cached [4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096], chunks a token 1.00, replies 8, gpu 48, 2190, 8.64
+2026-11-10 11:06:04   4096 x8 rep 2: round 72.923 ms p95 74.961 (gaps 1949, window 17.8 s), ttft max 1.424 s, cached [4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096], chunks a token 1.00, replies 8, gpu 49, 2190, 8.76
+2026-11-10 11:06:34   4096 x8 rep 3: round 72.934 ms p95 74.788 (gaps 1938, window 17.8 s), ttft max 1.480 s, cached [4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096], chunks a token 1.00, replies 8, gpu 50, 2190, 8.86
+2026-11-10 11:07:04   4096 x8 rep 4: round 73.055 ms p95 74.779 (gaps 1943, window 17.8 s), ttft max 1.470 s, cached [4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096], chunks a token 1.00, replies 8, gpu 51, 2190, 8.89
+2026-11-10 11:07:34   4096 x8 rep 5: round 73.004 ms p95 74.764 (gaps 1949, window 17.9 s), ttft max 1.424 s, cached [4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096], chunks a token 1.00, replies 8, gpu 51, 2190, 8.89
+2026-11-10 11:08:04   4096 x8 rep 6: round 72.995 ms p95 74.674 (gaps 1946, window 17.9 s), ttft max 1.426 s, cached [4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096], chunks a token 1.00, replies 8, gpu 52, 2190, 8.95
+2026-11-10 11:08:14   cell 4096 x8: 72.964 ms
+grid km4b end

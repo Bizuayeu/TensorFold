@@ -1,0 +1,202 @@
+[
+ {
+  "label": "fm3b",
+  "prompt": "fibonacci-raw",
+  "temperature": 1.0,
+  "tokens": 256,
+  "decode_tps_median": 52.060043875137886,
+  "decode_tps_all": [
+   48.0,
+   52.06,
+   53.25
+  ],
+  "ttft_s_median": 0.09438980100094341,
+  "prefill_tps_median": 148.321,
+  "itl_mean_ms_median": 19.209,
+  "itl_p50_ms_median": 0.0,
+  "itl_p95_ms_median": 50.673,
+  "round_gap_p50_ms_median": 41.316,
+  "round_gap_p95_ms_median": 52.591,
+  "tokens_per_chunk_median": 2.207,
+  "evidence": [
+   {
+    "prompt_tokens": 14,
+    "cached_tokens": 0,
+    "tokens": 256,
+    "cache_state": "cold",
+    "complete": true,
+    "token_sha": "db24a3285aa0",
+    "output_sha256": "6f405dd34382fcea37f4409b0ae3f8e6b2862ce1e919686c2983c33bd2603443"
+   },
+   {
+    "prompt_tokens": 14,
+    "cached_tokens": 0,
+    "tokens": 256,
+    "cache_state": "cold",
+    "complete": true,
+    "token_sha": "76c684c1e692",
+    "output_sha256": "573e40e3cfd23c20c806a6900e267996dfe8776393c7b4b538c9f20bb1f7ca3a"
+   },
+   {
+    "prompt_tokens": 14,
+    "cached_tokens": 0,
+    "tokens": 256,
+    "cache_state": "cold",
+    "complete": true,
+    "token_sha": "f6efb2b3d836",
+    "output_sha256": "80bd1e9a043fba0fa99ac055b337259c2ebac802f9800f6f535ea1b8642ff8f4"
+   }
+  ],
+  "sample": " Also, write a function that generates Fibonacci numbers up to a given limit using a generator.\n\nHere's a simple recursive implementation:\n\nHowever, this is ine"
+ },
+ {
+  "label": "fm3b",
+  "prompt": "gpu-chat-no-think",
+  "temperature": 1.0,
+  "tokens": 256,
+  "decode_tps_median": 46.24437769651822,
+  "decode_tps_all": [
+   46.24,
+   45.85,
+   47.17
+  ],
+  "ttft_s_median": 0.14189857200835831,
+  "prefill_tps_median": 225.513,
+  "itl_mean_ms_median": 21.624,
+  "itl_p50_ms_median": 36.355,
+  "itl_p95_ms_median": 47.844,
+  "round_gap_p50_ms_median": 38.07,
+  "round_gap_p95_ms_median": 50.307,
+  "tokens_per_chunk_median": 1.855,
+  "evidence": [
+   {
+    "prompt_tokens": 32,
+    "cached_tokens": 0,
+    "tokens": 256,
+    "cache_state": "cold",
+    "complete": true,
+    "token_sha": "9905de61e9a3",
+    "output_sha256": "a08c8c9a58d2ae059ad69a614d57e64fa5a2a50856dd82a00a94e6714eceb6a8"
+   },
+   {
+    "prompt_tokens": 32,
+    "cached_tokens": 0,
+    "tokens": 256,
+    "cache_state": "cold",
+    "complete": true,
+    "token_sha": "8eca6396e380",
+    "output_sha256": "58e0d231c834dbac8b210949a3166710c5823e59d7e68d658d750333ac0f5f90"
+   },
+   {
+    "prompt_tokens": 32,
+    "cached_tokens": 0,
+    "tokens": 256,
+    "cache_state": "cold",
+    "complete": true,
+    "token_sha": "a604461c69be",
+    "output_sha256": "54a46b493a5765eae101851a09111c9a82af9c28efffebda725f4ed8517a5e09"
+   }
+  ],
+  "sample": "Here's how a GPU handles matrix multiplication, starting with the intuition and then a concrete example.\n\n## The Big Idea\n\nA matrix multiplication is just a hug"
+ },
+ {
+  "label": "fm3b",
+  "prompt": "fibonacci-raw",
+  "temperature": 0.0,
+  "tokens": 256,
+  "decode_tps_median": 64.40622192077268,
+  "decode_tps_all": [
+   64.44,
+   64.41,
+   63.53
+  ],
+  "ttft_s_median": 0.09436962200561538,
+  "prefill_tps_median": 148.353,
+  "itl_mean_ms_median": 15.526,
+  "itl_p50_ms_median": 0.0,
+  "itl_p95_ms_median": 50.635,
+  "round_gap_p50_ms_median": 48.024,
+  "round_gap_p95_ms_median": 51.734,
+  "tokens_per_chunk_median": 2.943,
+  "evidence": [
+   {
+    "prompt_tokens": 14,
+    "cached_tokens": 0,
+    "tokens": 256,
+    "cache_state": "cold",
+    "complete": true,
+    "token_sha": "7cd4ab7084c3",
+    "output_sha256": "54564454ce945beb5e2fb0bb5b5751dc02e1b91acf05d996e04eec2b0e0fbcea"
+   },
+   {
+    "prompt_tokens": 14,
+    "cached_tokens": 0,
+    "tokens": 256,
+    "cache_state": "cold",
+    "complete": true,
+    "token_sha": "7cd4ab7084c3",
+    "output_sha256": "54564454ce945beb5e2fb0bb5b5751dc02e1b91acf05d996e04eec2b0e0fbcea"
+   },
+   {
+    "prompt_tokens": 14,
+    "cached_tokens": 0,
+    "tokens": 256,
+    "cache_state": "cold",
+    "complete": true,
+    "token_sha": "7cd4ab7084c3",
+    "output_sha256": "54564454ce945beb5e2fb0bb5b5751dc02e1b91acf05d996e04eec2b0e0fbcea"
+   }
+  ],
+  "sample": " Fibonacci sequence: 0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610, 987, 1597, 2584, 4181, 6765, 10946, 17711, 28657, 46368, 75025, 121393, 196418"
+ },
+ {
+  "label": "fm3b",
+  "prompt": "gpu-chat-no-think",
+  "temperature": 0.0,
+  "tokens": 256,
+  "decode_tps_median": 51.44837539054952,
+  "decode_tps_all": [
+   51.45,
+   51.14,
+   51.5
+  ],
+  "ttft_s_median": 0.1436925180023536,
+  "prefill_tps_median": 222.698,
+  "itl_mean_ms_median": 19.437,
+  "itl_p50_ms_median": 0.0,
+  "itl_p95_ms_median": 50.834,
+  "round_gap_p50_ms_median": 44.443,
+  "round_gap_p95_ms_median": 52.763,
+  "tokens_per_chunk_median": 2.306,
+  "evidence": [
+   {
+    "prompt_tokens": 32,
+    "cached_tokens": 0,
+    "tokens": 256,
+    "cache_state": "cold",
+    "complete": true,
+    "token_sha": "f4549d3852df",
+    "output_sha256": "1e6894d125e5369c673bd7a18cd3108d99222a837b3f9e6e4260e858d0780dc1"
+   },
+   {
+    "prompt_tokens": 32,
+    "cached_tokens": 0,
+    "tokens": 256,
+    "cache_state": "cold",
+    "complete": true,
+    "token_sha": "f4549d3852df",
+    "output_sha256": "1e6894d125e5369c673bd7a18cd3108d99222a837b3f9e6e4260e858d0780dc1"
+   },
+   {
+    "prompt_tokens": 32,
+    "cached_tokens": 0,
+    "tokens": 256,
+    "cache_state": "cold",
+    "complete": true,
+    "token_sha": "f4549d3852df",
+    "output_sha256": "1e6894d125e5369c673bd7a18cd3108d99222a837b3f9e6e4260e858d0780dc1"
+   }
+  ],
+  "sample": "# Matrix Multiplication on a GPU\n\n## The Plain-English Explanation\n\nImagine you have a huge stack of homework to grade, where each problem is completely indepen"
+ }
+]

@@ -1,0 +1,28 @@
+figure (gate: *)                              fm3a       fm3b       fm3c       fh3a       fh3b
+  cold 2048 s                                1.098      1.081      1.087       1.08      1.089  loss -0.35% range 1.57% within
+  cold 8192 s                                4.593      4.581      4.603      4.581      4.587  loss -0.19% range 0.49% within
+* cold 9600 s (mean of two)                  5.331      5.314      5.364      5.325      5.348  loss +0.01% range 0.93% within
+  cold 32768 s                              17.961     17.596     17.704     17.609     17.695  loss -0.57% range 2.05% within
+* cold 38400 s (mean of two)                20.744     20.598     20.745     20.599      20.71  loss -0.20% range 0.71% within
+  cold 65536 s                              35.567     35.171     35.461     35.223     35.392  loss -0.26% range 1.12% within
+  openai fibonacci-raw t=1.0 tok/s          51.921      52.06     51.725     51.803     52.034  loss -0.03% range 0.65% within
+  openai gpu-chat-no-think t=1.0 tok/s      45.825     46.244     45.972     46.021     46.304  loss -0.32% range 0.91% within
+  openai fibonacci-raw t=0.0 tok/s          64.164     64.406     64.127      64.03     63.684  loss +0.58% range 0.44% slower
+  openai gpu-chat-no-think t=0.0 tok/s      50.991     51.448     50.598     51.032     51.332  loss -0.33% range 1.67% within
+* decode x1 per stream tok/s                  65.9       68.2       67.9       67.9       68.0  loss -0.92% range 3.42% within
+* decode x4 per stream tok/s                  23.9       24.3       24.4       23.8       24.3  loss +0.62% range 2.07% within
+* decode x4 aggregate tok/s                   88.3       90.2       90.1       88.2       89.5  loss +0.76% range 2.12% within
+* decode x8 per stream tok/s                  14.4       14.9       14.7       14.7       14.7  loss -0.23% range 3.41% within
+* decode x8 aggregate tok/s                   96.5       98.7       97.7       97.7       98.1  loss -0.27% range 2.25% within
+  edit x1 per stream tok/s                    96.0      103.8      103.8      103.6      102.6  loss -1.88% range 7.71% within
+  edit x4 per stream tok/s                    30.5       30.2       30.0       29.6       30.0  loss +1.43% range 1.65% open
+  edit x4 aggregate tok/s                    104.4      102.7      101.4       99.0      101.4  loss +2.56% range 2.92% open
+exactness: every cell, greedy row and cold prompt holds
+note: openai fibonacci-raw t=1.0: the arms' token_sha agree
+note: openai gpu-chat-no-think t=1.0: the arms' token_sha agree
+memory fm3a     model 63.85 GiB, 8 streams, 5346 pages (33.28 GiB), 291 MiB fixed, 39.4 GiB left, kept 32, loaded in 45.5 s
+memory fm3b     model 63.85 GiB, 8 streams, 5352 pages (33.32 GiB), 291 MiB fixed, 39.4 GiB left, kept 32, loaded in 45.8 s
+memory fm3c     model 63.85 GiB, 8 streams, 5353 pages (33.33 GiB), 291 MiB fixed, 39.4 GiB left, kept 32, loaded in 46.0 s
+memory fh3a     model 63.85 GiB, 8 streams, 5365 pages (33.4 GiB), 291 MiB fixed, 39.5 GiB left, kept 32, loaded in 46.0 s
+memory fh3b     model 63.85 GiB, 8 streams, 5360 pages (33.37 GiB), 291 MiB fixed, 39.5 GiB left, kept 32, loaded in 45.8 s
+fsum: 0 slower gate figures, 1 slower receipt figures, 0 exactness failures, 18 figures

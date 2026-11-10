@@ -1,0 +1,20 @@
+lm4a: end, client ac167c3342d4f43f, ids 54c6382bf88d70ba, levels [1, 4, 8], 256 tokens, 3 reps, version 1.2.5
+lh4: end, client ac167c3342d4f43f, ids 54c6382bf88d70ba, levels [1, 4, 8], 256 tokens, 3 reps, version 1.2.5
+lm4b: end, client ac167c3342d4f43f, ids 54c6382bf88d70ba, levels [1, 4, 8], 256 tokens, 3 reps, version 1.2.5
+cell                    lm4a         lh4        lm4b     /lm4a     /lm4a   spread %   same replies
+4K x1                 27.543      27.925      27.653    +1.39%    +0.40%   0.46 1.45 0.22   yes yes
+4K x4                 46.709      46.654      46.668    -0.12%    -0.09%   0.32 0.27 0.21   yes yes
+4K x8                 72.811      72.967      72.829    +0.21%    +0.02%   0.15 0.05 0.62   yes yes
+64K x1                28.001      28.008      28.059    +0.02%    +0.21%   0.12 0.13 1.22   yes yes
+64K x4                47.432      47.371      47.918    -0.13%    +1.02%   0.26 0.42 1.08   yes yes
+64K x8                73.093      73.297      73.364    +0.28%    +0.37%   1.54 0.29 0.44   yes yes
+256K x1               29.175      28.753      29.136    -1.45%    -0.13%   0.30 1.22 0.19   yes yes
+256K x4               50.213      48.784      50.228    -2.84%    +0.03%   0.94 1.60 0.79   yes yes
+256K x8               77.100      74.185      77.126    -3.78%    +0.03%   2.03 0.53 0.36   yes yes
+1016K x1              33.339      31.658      33.348    -5.04%    +0.03%   0.86 0.05 0.16   yes yes
+1016K x4              67.558      61.245      67.581    -9.34%    +0.03%   0.31 0.02 0.12   yes yes
+1016K x8             113.028     100.236     113.129   -11.32%    +0.09%   0.37 0.40 0.20   yes yes
+geometric mean over 12 cells every label counted:
+  lm4a     50.287 ms, gpu 47-56 C, 2190-2190 MHz
+  lh4      48.900 ms (-2.76%), gpu 47-56 C, 2190-2190 MHz
+  lm4b     50.371 ms (+0.17%), gpu 47-56 C, 2190-2190 MHz

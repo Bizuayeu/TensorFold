@@ -1,0 +1,202 @@
+[
+ {
+  "label": "kw4",
+  "prompt": "fibonacci-raw",
+  "temperature": 1.0,
+  "tokens": 256,
+  "decode_tps_median": 70.39642091940173,
+  "decode_tps_all": [
+   70.4,
+   69.04,
+   70.74
+  ],
+  "ttft_s_median": 0.08078842499526218,
+  "prefill_tps_median": 173.292,
+  "itl_mean_ms_median": 14.205,
+  "itl_p50_ms_median": 0.0,
+  "itl_p95_ms_median": 43.74,
+  "round_gap_p50_ms_median": 38.927,
+  "round_gap_p95_ms_median": 44.804,
+  "tokens_per_chunk_median": 2.723,
+  "evidence": [
+   {
+    "prompt_tokens": 14,
+    "cached_tokens": 0,
+    "tokens": 256,
+    "cache_state": "cold",
+    "complete": true,
+    "token_sha": "bb64b44e5544",
+    "output_sha256": "0e70ecedf174db9f75e579eacd5147e46adb340aa7d92fc59e18fb0cba7cdb2f"
+   },
+   {
+    "prompt_tokens": 14,
+    "cached_tokens": 0,
+    "tokens": 256,
+    "cache_state": "cold",
+    "complete": true,
+    "token_sha": "dbd27ed22f3d",
+    "output_sha256": "fd2898cfd9f0a55254d361b5576e9c53bf98c553076defdb4d7a368d19724960"
+   },
+   {
+    "prompt_tokens": 14,
+    "cached_tokens": 0,
+    "tokens": 256,
+    "cache_state": "cold",
+    "complete": true,
+    "token_sha": "42a4c62384e1",
+    "output_sha256": "31320a7e2fadf5b26b1a1c19fa330b834bae3eeba4477f71c9f01eb844774433"
+   }
+  ],
+  "sample": " Also, write a function that generates Fibonacci numbers up to a given limit using a generator.\n\nHere's a comprehensive answer that covers both approaches:\n\n1. "
+ },
+ {
+  "label": "kw4",
+  "prompt": "gpu-chat-no-think",
+  "temperature": 1.0,
+  "tokens": 256,
+  "decode_tps_median": 57.28659253507214,
+  "decode_tps_all": [
+   57.29,
+   55.52,
+   58.48
+  ],
+  "ttft_s_median": 0.12034108099760488,
+  "prefill_tps_median": 265.911,
+  "itl_mean_ms_median": 17.456,
+  "itl_p50_ms_median": 0.0,
+  "itl_p95_ms_median": 41.13,
+  "round_gap_p50_ms_median": 34.327,
+  "round_gap_p95_ms_median": 42.771,
+  "tokens_per_chunk_median": 2.065,
+  "evidence": [
+   {
+    "prompt_tokens": 32,
+    "cached_tokens": 0,
+    "tokens": 256,
+    "cache_state": "cold",
+    "complete": true,
+    "token_sha": "c914f7ca7142",
+    "output_sha256": "57b90948751395e15f8951de7053021e575f730d918352a41c2a8c37e7760d65"
+   },
+   {
+    "prompt_tokens": 32,
+    "cached_tokens": 0,
+    "tokens": 256,
+    "cache_state": "cold",
+    "complete": true,
+    "token_sha": "085f9ab2d1f5",
+    "output_sha256": "d398a448df933d13b04bfe16594e0b6058a145cec3b23ec5ebb605309dc3ebe5"
+   },
+   {
+    "prompt_tokens": 32,
+    "cached_tokens": 0,
+    "tokens": 256,
+    "cache_state": "cold",
+    "complete": true,
+    "token_sha": "6c4c26632875",
+    "output_sha256": "b9e96e1d29819c5940aa74d29321ff6e6fa463c68d6c8e891cbd5dd143865290"
+   }
+  ],
+  "sample": "Think of a GPU as a huge team of workers, each capable of doing simple arithmetic. A CPU is like a few skilled workers who can do very complex tasks quickly. Ma"
+ },
+ {
+  "label": "kw4",
+  "prompt": "fibonacci-raw",
+  "temperature": 0.0,
+  "tokens": 256,
+  "decode_tps_median": 73.00587206699949,
+  "decode_tps_all": [
+   73.01,
+   72.84,
+   73.01
+  ],
+  "ttft_s_median": 0.0822033470030874,
+  "prefill_tps_median": 170.309,
+  "itl_mean_ms_median": 13.698,
+  "itl_p50_ms_median": 0.0,
+  "itl_p95_ms_median": 42.62,
+  "round_gap_p50_ms_median": 39.877,
+  "round_gap_p95_ms_median": 43.213,
+  "tokens_per_chunk_median": 2.844,
+  "evidence": [
+   {
+    "prompt_tokens": 14,
+    "cached_tokens": 0,
+    "tokens": 256,
+    "cache_state": "cold",
+    "complete": true,
+    "token_sha": "5b8af3e0ec61",
+    "output_sha256": "870ddf80e77cc8820c6f4bbba05b7440deb31a4f6a77388947e9c695b0ef7940"
+   },
+   {
+    "prompt_tokens": 14,
+    "cached_tokens": 0,
+    "tokens": 256,
+    "cache_state": "cold",
+    "complete": true,
+    "token_sha": "5b8af3e0ec61",
+    "output_sha256": "870ddf80e77cc8820c6f4bbba05b7440deb31a4f6a77388947e9c695b0ef7940"
+   },
+   {
+    "prompt_tokens": 14,
+    "cached_tokens": 0,
+    "tokens": 256,
+    "cache_state": "cold",
+    "complete": true,
+    "token_sha": "5b8af3e0ec61",
+    "output_sha256": "870ddf80e77cc8820c6f4bbba05b7440deb31a4f6a77388947e9c695b0ef7940"
+   }
+  ],
+  "sample": " Fibonacci sequence: 0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, ... The next number is found by adding up the two numbers before it. The Fibonacci sequence i"
+ },
+ {
+  "label": "kw4",
+  "prompt": "gpu-chat-no-think",
+  "temperature": 0.0,
+  "tokens": 256,
+  "decode_tps_median": 60.872217581268394,
+  "decode_tps_all": [
+   60.87,
+   60.88,
+   60.79
+  ],
+  "ttft_s_median": 0.12032730603823438,
+  "prefill_tps_median": 265.941,
+  "itl_mean_ms_median": 16.428,
+  "itl_p50_ms_median": 0.0,
+  "itl_p95_ms_median": 42.863,
+  "round_gap_p50_ms_median": 38.054,
+  "round_gap_p95_ms_median": 43.437,
+  "tokens_per_chunk_median": 2.327,
+  "evidence": [
+   {
+    "prompt_tokens": 32,
+    "cached_tokens": 0,
+    "tokens": 256,
+    "cache_state": "cold",
+    "complete": true,
+    "token_sha": "8e963515aed3",
+    "output_sha256": "1e7b1a952aac2989a4e715b8292df7041017b08e30b8b6f669cd9f8f1d854507"
+   },
+   {
+    "prompt_tokens": 32,
+    "cached_tokens": 0,
+    "tokens": 256,
+    "cache_state": "cold",
+    "complete": true,
+    "token_sha": "8e963515aed3",
+    "output_sha256": "1e7b1a952aac2989a4e715b8292df7041017b08e30b8b6f669cd9f8f1d854507"
+   },
+   {
+    "prompt_tokens": 32,
+    "cached_tokens": 0,
+    "tokens": 256,
+    "cache_state": "cold",
+    "complete": true,
+    "token_sha": "8e963515aed3",
+    "output_sha256": "1e7b1a952aac2989a4e715b8292df7041017b08e30b8b6f669cd9f8f1d854507"
+   }
+  ],
+  "sample": "# Matrix Multiplication on a GPU\n\n## The Plain English Explanation\n\nImagine you have a huge stack of paperwork where every page needs the same calculation done "
+ }
+]
