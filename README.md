@@ -1,7 +1,8 @@
 # Receipts: GLM-5.3-Flash on CUDA, a decode window's DSA select on many CTAs
 
-The raw results and the comparison tools behind the tables of the pull request whose head is `a23c1fe6d` (on main
-`1b16a6e8d`). Binaries, by sha256 (first 16): main's native `7a1b270cfa91da1d` and this head's `9b51d5a655f84042`,
+The raw results and the comparison tools behind the tables of the pull request at `a23c1fe6d` (on main `1b16a6e8d`),
+its head when these ran. Since then a fifth commit adds a host test, a CHANGELOG line and comments, a sixth
+re-pins `glm_glue.cu` in the serving sources' manifest, and the six sit on main `bf7780aff` (head `a175c62df`). Binaries, by sha256 (first 16): main's native `7a1b270cfa91da1d` and this head's `9b51d5a655f84042`,
 each built for these runs with CUDA 13.3; `d8`'s `7a0a87cf53aa3379`. Every run was on GB10s (sm_121), each start fresh.
 
 ## Layout
@@ -24,17 +25,24 @@ each built for these runs with CUDA 13.3; `d8`'s `7a0a87cf53aa3379`. Every run w
 - `tp4k/`: TP=4's 4K cells taken again, as `tp4l/` ran them but at 4,096 tokens only, 6 reps a cell: `kw4` (this head,
   not counted), `km4a`, `kh4a`, `km4b`, `kh4b`, `km4c` (`km` main, `kh` this head); the files as in `tp4l/`,
   `k-gsum.txt` over the five.
+- `tp2l/`: long contexts at TP=2 (two GB10s cabled to each other, the release's TP=2 settings, split,
+  `TF_GLM_PROMPT_TAIL=1`), main against this head, for the review's ask 3: `lw2` (this head, not counted, 262,144
+  tokens only), `lm2a` (main), `lh2` (this head), `lm2b` (main), at 262,144 and 1,040,384 tokens, 1 and 4 streams,
+  6 reps a cell. At 1,040,384 tokens and 4 streams some reps don't count: in those, one stream's first token came
+  only after another stream had ended (13 to 22 s after the request), so the four never decoded together; that cell
+  is the median of the 3, 3 and 4 reps that counted. The files as in `tp4l/`, `l2-gsum.txt` over the three.
 - `d8/`: the switch's runs on `d8` (this change's kernel code and dispatch on an earlier main, `b503008ce`): at TP=4
   `dz4a` (`TF_GLM_DSEL=0`), `dd4` (default), `dz4b` (`=0`); at TP=2 `dz2a`, `dd2`, `dz2b`; TP=2's short cells again,
   `ez2a`, `ed2a`, `ez2b`, `ed2b`, `ez2c` (`ez` `=0`, `ed` default).
 - `tools/`: the comparison tools, and the clients the chains ran on the hosts beside the servers.
 - `chains/`: the chains and arm scripts as they ran, to read. They reach the hosts through `sx4.sh` and start the ranks
-  with `serve4.sh` and a `rank.env`, which hold the hosts' addresses and are left out. In the three arm scripts the
-  boxes' names read `host01` to `host07`, and one comment in `chains/tp2-arm.sh` that named the pair's link address
-  reads `<the pair's link address>`; nothing else differs. The files as they ran, by sha256: `tp2-arm.sh`
+  with `serve4.sh` and a `rank.env`, which hold the hosts' addresses and are left out. In the four arm scripts the
+  boxes' names read `host01` to `host07`, and one comment each in `chains/tp2-arm.sh` and `chains/tp67-arm.sh` that
+  named the pair's link address reads `<the pair's link address>`; nothing else differs. The files as they ran, by sha256: `tp2-arm.sh`
   `14246af9a461e0d0db057112375a69d32e0dcdd692eefb17955c2987e3a802af`, `tp3-arm.sh`
   `6f87303cd17282055db10f086f9b89876725a621314f747d10995e50529e0c9c`, `tp4-arm.sh`
-  `11ced8842eae0e62ca65c2c9f5a55c62a920a8afecf09af8ccfa5d1cb4400b21`.
+  `11ced8842eae0e62ca65c2c9f5a55c62a920a8afecf09af8ccfa5d1cb4400b21`, `tp67-arm.sh`
+  `b896e9f5a72b3d8d19dcd681b121eb1f692264eeb306db94fc233a5a32e8e5ed`.
 - `SHA256SUMS`: every file's sha256.
 
 ## Rerun the tables
@@ -50,6 +58,8 @@ python3 tools/gsum.py tp4l lm4a lh4 lm4b                         # long contexts
 python3 tools/gverdict.py tp4l lm4a,lm4b lh4                     # the TP=4 table's last column, under fsum.py's rule
 python3 tools/gsum.py tp4k km4a kh4a km4b kh4b km4c              # the 4K cells taken again
 python3 tools/gverdict.py tp4k km4a,km4b,km4c kh4a,kh4b          # the same, main's three against this head's two
+python3 tools/gsum.py tp2l lm2a lh2 lm2b                         # TP=2's long contexts (the review's ask 3)
+python3 tools/gverdict.py tp2l lm2a,lm2b lh2                     # the same under fsum.py's rule
 python3 tools/gsum.py d8 dz4a dd4 dz4b
 ```
 

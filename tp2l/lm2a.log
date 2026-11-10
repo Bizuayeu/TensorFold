@@ -1,0 +1,48 @@
+2026-11-10 20:12:11 == grid67 lm2a begin: grid.py ac167c3342d4f43f
+2026-11-10 20:12:11 == grid lm2a begin: levels [1, 4], contexts [262144, 1040384], 256 tokens, 6 reps, client ac167c3342d4f43f
+2026-11-10 20:12:11   token list 54c6382bf88d70ba: 1578844 tokens
+2026-11-10 20:12:56   prefix 65536: 44.9 s, prompt 65537, cached 0, gpu 70, 2184, 61.90
+2026-11-10 20:14:13   prefix 131072: 46.7 s, prompt 131073, cached 65536, gpu 71, 2184, 63.14
+2026-11-10 20:15:31   prefix 196608: 48.1 s, prompt 196609, cached 131072, gpu 73, 2184, 62.69
+2026-11-10 20:16:51   prefix 262144: 49.8 s, prompt 262145, cached 196608, gpu 71, 2184, 62.53
+2026-11-10 20:17:32   262144 x1 rep 1: round 42.295 ms p95 49.473 (gaps 255, window 11.0 s), ttft max 0.206 s, cached [262144], chunks a token 1.00, replies 1, gpu 56, 2190, 9.79
+2026-11-10 20:17:53   262144 x1 rep 2: round 42.981 ms p95 43.805 (gaps 255, window 10.9 s), ttft max 0.204 s, cached [262144], chunks a token 1.00, replies 1, gpu 56, 2190, 9.70
+2026-11-10 20:18:14   262144 x1 rep 3: round 42.239 ms p95 43.071 (gaps 255, window 10.8 s), ttft max 0.207 s, cached [262144], chunks a token 1.00, replies 1, gpu 55, 2190, 9.67
+2026-11-10 20:18:36   262144 x1 rep 4: round 42.229 ms p95 49.531 (gaps 255, window 11.0 s), ttft max 0.207 s, cached [262144], chunks a token 1.00, replies 1, gpu 55, 2190, 9.60
+2026-11-10 20:18:57   262144 x1 rep 5: round 42.393 ms p95 43.392 (gaps 255, window 10.9 s), ttft max 0.206 s, cached [262144], chunks a token 1.00, replies 1, gpu 55, 2190, 9.62
+2026-11-10 20:19:18   262144 x1 rep 6: round 42.535 ms p95 43.675 (gaps 255, window 10.9 s), ttft max 0.208 s, cached [262144], chunks a token 1.00, replies 1, gpu 55, 2190, 9.58
+2026-11-10 20:19:28   cell 262144 x1: 42.344 ms
+2026-11-10 20:20:19   262144 x4 rep 1: round 79.860 ms p95 82.401 (gaps 994, window 20.1 s), ttft max 1.117 s, cached [262144, 262144, 262144, 262144], chunks a token 1.00, replies 4, gpu 52, 2190, 9.33
+2026-11-10 20:20:51   262144 x4 rep 2: round 79.070 ms p95 82.423 (gaps 994, window 19.9 s), ttft max 1.119 s, cached [262144, 262144, 262144, 262144], chunks a token 1.00, replies 4, gpu 54, 2190, 9.54
+2026-11-10 20:21:23   262144 x4 rep 3: round 80.301 ms p95 83.480 (gaps 994, window 20.2 s), ttft max 1.119 s, cached [262144, 262144, 262144, 262144], chunks a token 1.00, replies 4, gpu 55, 2190, 9.63
+2026-11-10 20:21:54   262144 x4 rep 4: round 79.387 ms p95 82.774 (gaps 994, window 20.0 s), ttft max 1.115 s, cached [262144, 262144, 262144, 262144], chunks a token 1.00, replies 4, gpu 55, 2190, 9.65
+2026-11-10 20:22:25   262144 x4 rep 5: round 79.011 ms p95 82.589 (gaps 996, window 19.9 s), ttft max 1.116 s, cached [262144, 262144, 262144, 262144], chunks a token 1.00, replies 4, gpu 55, 2190, 9.67
+2026-11-10 20:22:57   262144 x4 rep 6: round 79.868 ms p95 82.286 (gaps 994, window 20.1 s), ttft max 1.121 s, cached [262144, 262144, 262144, 262144], chunks a token 1.00, replies 4, gpu 56, 2190, 9.69
+2026-11-10 20:23:07   cell 262144 x4: 79.623 ms
+2026-11-10 20:24:28   prefix 327680: 51.4 s, prompt 327681, cached 262144, gpu 72, 2184, 63.85
+2026-11-10 20:25:51   prefix 393216: 52.5 s, prompt 393217, cached 327680, gpu 74, 2184, 63.79
+2026-11-10 20:27:15   prefix 458752: 54.3 s, prompt 458753, cached 393216, gpu 74, 2184, 63.63
+2026-11-10 20:28:41   prefix 524288: 55.6 s, prompt 524289, cached 458752, gpu 74, 2184, 64.14
+2026-11-10 20:30:08   prefix 589824: 57.0 s, prompt 589825, cached 524288, gpu 75, 2184, 64.51
+2026-11-10 20:31:37   prefix 655360: 58.7 s, prompt 655361, cached 589824, gpu 73, 2184, 64.36
+2026-11-10 20:33:07   prefix 720896: 60.3 s, prompt 720897, cached 655360, gpu 75, 2184, 64.24
+2026-11-10 20:34:39   prefix 786432: 61.6 s, prompt 786433, cached 720896, gpu 75, 2184, 64.42
+2026-11-10 20:36:11   prefix 851968: 62.5 s, prompt 851969, cached 786432, gpu 75, 2184, 64.86
+2026-11-10 20:37:45   prefix 917504: 64.2 s, prompt 917505, cached 851968, gpu 77, 2184, 63.87
+2026-11-10 20:39:21   prefix 983040: 66.0 s, prompt 983041, cached 917504, gpu 76, 2184, 62.79
+2026-11-10 20:40:51   prefix 1040384: 59.2 s, prompt 1040385, cached 983040, gpu 75, 2184, 65.53
+2026-11-10 20:41:33   1040384 x1 rep 1: round 46.372 ms p95 47.656 (gaps 255, window 11.9 s), ttft max 0.288 s, cached [1040384], chunks a token 1.00, replies 1, gpu 58, 2190, 9.90
+2026-11-10 20:41:55   1040384 x1 rep 2: round 46.749 ms p95 48.118 (gaps 255, window 12.0 s), ttft max 0.292 s, cached [1040384], chunks a token 1.00, replies 1, gpu 57, 2190, 9.85
+2026-11-10 20:42:18   1040384 x1 rep 3: round 46.568 ms p95 55.247 (gaps 255, window 12.1 s), ttft max 0.289 s, cached [1040384], chunks a token 1.00, replies 1, gpu 57, 2190, 9.86
+2026-11-10 20:42:40   1040384 x1 rep 4: round 46.507 ms p95 47.808 (gaps 255, window 11.9 s), ttft max 0.290 s, cached [1040384], chunks a token 1.00, replies 1, gpu 57, 2190, 9.81
+2026-11-10 20:43:02   1040384 x1 rep 5: round 46.256 ms p95 47.615 (gaps 255, window 11.8 s), ttft max 0.319 s, cached [1040384], chunks a token 1.00, replies 1, gpu 56, 2190, 9.76
+2026-11-10 20:43:25   1040384 x1 rep 6: round 46.584 ms p95 54.560 (gaps 255, window 12.1 s), ttft max 0.290 s, cached [1040384], chunks a token 1.00, replies 1, gpu 56, 2190, 9.70
+2026-11-10 20:43:35   cell 1040384 x1: 46.537 ms
+2026-11-10 20:44:38   1040384 x4 rep 1: round - ms p95 - (gaps 0, window -0.9 s), ttft max 12.987 s, cached [1040384, 1040384, 1040384, 1040384], chunks a token 1.00, replies 4, gpu 53, 2190, 9.44 -- does not count: streams overlap for 0 rounds
+2026-11-10 20:45:15   1040384 x4 rep 2: round 98.324 ms p95 101.108 (gaps 994, window 24.8 s), ttft max 1.332 s, cached [1040384, 1040384, 1040384, 1040384], chunks a token 1.00, replies 4, gpu 55, 2190, 9.67
+2026-11-10 20:45:52   1040384 x4 rep 3: round 97.683 ms p95 99.695 (gaps 994, window 24.6 s), ttft max 1.331 s, cached [1040384, 1040384, 1040384, 1040384], chunks a token 1.00, replies 4, gpu 56, 2190, 9.77
+2026-11-10 20:46:35   1040384 x4 rep 4: round - ms p95 - (gaps 0, window -0.9 s), ttft max 13.099 s, cached [1040384, 1040384, 1040384, 1040384], chunks a token 1.00, replies 4, gpu 56, 2190, 9.78 -- does not count: streams overlap for 0 rounds
+2026-11-10 20:47:12   1040384 x4 rep 5: round 97.783 ms p95 99.802 (gaps 994, window 24.6 s), ttft max 1.331 s, cached [1040384, 1040384, 1040384, 1040384], chunks a token 1.00, replies 4, gpu 57, 2190, 9.80
+2026-11-10 20:47:56   1040384 x4 rep 6: round - ms p95 - (gaps 0, window -0.9 s), ttft max 13.077 s, cached [1040384, 1040384, 1040384, 1040384], chunks a token 1.00, replies 4, gpu 57, 2190, 9.79 -- does not count: streams overlap for 0 rounds
+2026-11-10 20:48:06   cell 1040384 x4: 97.783 ms
+grid lm2a end

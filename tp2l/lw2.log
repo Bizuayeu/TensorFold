@@ -1,0 +1,16 @@
+2026-11-10 20:01:07 == grid67w lw2 begin: grid.py ac167c3342d4f43f
+2026-11-10 20:01:07 == grid lw2 begin: levels [1, 4], contexts [262144], 256 tokens, 3 reps, client ac167c3342d4f43f
+2026-11-10 20:01:07   token list 54c6382bf88d70ba: 1578844 tokens
+2026-11-10 20:01:53   prefix 65536: 46.0 s, prompt 65537, cached 0, gpu 68, 2184, 60.62
+2026-11-10 20:03:10   prefix 131072: 46.8 s, prompt 131073, cached 65536, gpu 70, 2184, 62.12
+2026-11-10 20:04:28   prefix 196608: 48.0 s, prompt 196609, cached 131072, gpu 70, 2184, 62.40
+2026-11-10 20:05:47   prefix 262144: 49.4 s, prompt 262145, cached 196608, gpu 72, 2184, 62.79
+2026-11-10 20:06:29   262144 x1 rep 1: round 41.873 ms p95 43.915 (gaps 255, window 10.8 s), ttft max 0.207 s, cached [262144], chunks a token 1.00, replies 1, gpu 55, 2190, 9.65
+2026-11-10 20:06:50   262144 x1 rep 2: round 42.120 ms p95 43.241 (gaps 255, window 10.8 s), ttft max 0.205 s, cached [262144], chunks a token 1.00, replies 1, gpu 55, 2190, 9.65
+2026-11-10 20:07:10   262144 x1 rep 3: round 41.844 ms p95 42.937 (gaps 255, window 10.7 s), ttft max 0.205 s, cached [262144], chunks a token 1.00, replies 1, gpu 55, 2190, 9.58
+2026-11-10 20:07:20   cell 262144 x1: 41.873 ms
+2026-11-10 20:08:12   262144 x4 rep 1: round 78.481 ms p95 87.730 (gaps 998, window 19.9 s), ttft max 1.100 s, cached [262144, 262144, 262144, 262144], chunks a token 1.00, replies 4, gpu 51, 2190, 9.28
+2026-11-10 20:08:43   262144 x4 rep 2: round 78.231 ms p95 93.384 (gaps 994, window 19.8 s), ttft max 1.114 s, cached [262144, 262144, 262144, 262144], chunks a token 1.00, replies 4, gpu 53, 2190, 9.48
+2026-11-10 20:09:15   262144 x4 rep 3: round 78.651 ms p95 95.718 (gaps 994, window 19.9 s), ttft max 1.125 s, cached [262144, 262144, 262144, 262144], chunks a token 1.00, replies 4, gpu 54, 2190, 9.55
+2026-11-10 20:09:25   cell 262144 x4: 78.481 ms
+grid lw2 end
