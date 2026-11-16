@@ -45,7 +45,7 @@ test "GLM TP3: real KDA projections accept uneven shares and retain aligned tile
     d.api.cuLaunchKernelEx = @import("cuda_pdl.zig").forwardEx(Capture.launch);
     d.func_name = null;
     const stream: cuda.Stream = .{ .d = &d, .handle = null };
-    var kernels: mm.Kernels = .{ .by_rows = @splat(function(&d, 1)), .prompt = function(&d, 2), .reduce = function(&d, 3), .pdl = false, .packed_rows = undefined, .tile = undefined, .tile_packed = undefined };
+    var kernels: mm.Kernels = .{ .by_rows = @splat(function(&d, 1)), .prompt = function(&d, 2), .reduce = function(&d, 3), .pdl = false, .packed_rows = undefined, .tile = undefined, .tile_packed = undefined, .prompt12 = undefined, .tile12 = undefined };
     var raw: glue.Kernels = undefined;
     raw.bmm_decode = function(&d, 4);
     raw.bmm_rows = function(&d, 5);

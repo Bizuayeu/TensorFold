@@ -53,6 +53,8 @@ Each release's page on GitHub has its notes and measurements. See [the 1.0.0 rel
 
 - CUDA: the Windows Qwen3.5 diagnostic build compiles again, with named refusals where a POSIX stage or pipe is needed; 5/5 Windows GNU cross-build steps pass (#4112, refs #4105). Thanks to @AIFlowML.
 
+- GLM-5.3-Flash on CUDA: a GB10 holds the BF16 dense layers and the head exactly in 12 bits a weight (a sign and mantissa byte and an exponent nibble over each 64-input block's window), about 23% fewer weight bytes, so decode reads less with the same replies byte for byte. `TF_GLM_DENSE_BITS=12` and `TF_GLM_HEAD_BITS=12` name it on other GPUs; `=16` keeps the BF16 tiles.
+
 - Tests: the serve-config fixtures no longer depend on a group-friendly umask, while the permission refusals stay; 39/39 host tests pass under umask 002 and 022 on Linux and macOS (#4115, fixes #4113). Thanks to @AIFlowML.
 
 
