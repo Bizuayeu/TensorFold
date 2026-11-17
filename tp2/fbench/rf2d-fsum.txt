@@ -1,0 +1,26 @@
+figure (gate: *)                            rf2dma     rf2dmb     rf2dmc     rf2dha     rf2dhb
+  cold 2048 s                                 1.37      1.348      1.344      1.353      1.339  loss -0.58% range 1.93% within
+  cold 8192 s                                5.724      5.767      5.745      5.827      5.736  loss +0.62% range 0.75% open
+* cold 9600 s (mean of two)                  6.976      7.053      6.902       7.04      6.866  loss -0.34% range 2.17% within
+  cold 32768 s                              22.739     22.663     22.381     22.626     22.413  loss -0.33% range 1.58% within
+* cold 38400 s (mean of two)                 26.07     26.273     26.336     26.324     26.278  loss +0.29% range 1.01% within
+  cold 65536 s                              44.711     44.944     44.842     44.451     44.786  loss -0.48% range 0.52% faster
+  openai fibonacci-raw t=1.0 tok/s           41.55     42.494     40.041     41.569     41.783  loss -0.76% range 5.93% within
+  openai gpu-chat-no-think t=1.0 tok/s      35.755     35.872     36.374     36.221     36.297  loss -0.72% range 1.72% within
+  openai fibonacci-raw t=0.0 tok/s          43.752     42.952     43.586     44.169     41.903  loss +0.91% range 1.84% within
+  openai gpu-chat-no-think t=0.0 tok/s      36.991     37.336     37.267     35.885     37.662  loss +1.14% range 0.93% slower
+* decode x1 per stream tok/s                  48.4       48.1       48.7       49.0       47.8  loss +0.00% range 1.24% within
+* decode x4 per stream tok/s                  17.6       17.6       17.6       17.6       17.6  loss +0.00% range 0.00% within
+* decode x4 aggregate tok/s                   68.3       67.9       67.7       68.2       68.5  loss -0.56% range 0.88% faster
+  edit x1 per stream tok/s                   114.7      117.5      114.6      114.4      114.4  loss +1.04% range 2.51% open
+  edit x4 per stream tok/s                    22.6       22.6       22.5       22.6       23.0  loss -1.03% range 0.44% faster
+  edit x4 aggregate tok/s                     77.7       76.7       76.5       76.9       78.6  loss -1.02% range 1.56% faster
+exactness: every cell, greedy row and cold prompt holds
+note: openai fibonacci-raw t=1.0: the arms' token_sha agree
+note: openai gpu-chat-no-think t=1.0: the arms' token_sha agree
+memory rf2dma   model 91.37 GiB, 4 streams, 2087 pages (12.99 GiB), 391 MiB fixed, 16.4 GiB left, kept 16, loaded in 52.7 s
+memory rf2dmb   model 91.37 GiB, 4 streams, 2081 pages (12.96 GiB), 391 MiB fixed, 16.6 GiB left, kept 16, loaded in 51.9 s
+memory rf2dmc   model 91.37 GiB, 4 streams, 2066 pages (12.86 GiB), 391 MiB fixed, 16.7 GiB left, kept 16, loaded in 51.4 s
+memory rf2dha   model 91.37 GiB, 4 streams, 2074 pages (12.91 GiB), 391 MiB fixed, 16.6 GiB left, kept 16, loaded in 51.6 s
+memory rf2dhb   model 91.37 GiB, 4 streams, 2080 pages (12.95 GiB), 391 MiB fixed, 16.6 GiB left, kept 16, loaded in 51.7 s
+fsum: 0 slower gate figures, 1 slower receipt figures, 0 exactness failures, 16 figures

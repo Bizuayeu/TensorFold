@@ -1,0 +1,14 @@
+2026-11-17 07:55:34 == fbench rf3cmb begin: model local-model, max_batch_size 8, decode levels 1,4,8, tools 1568b8d5bad37fbf 50178f289b380bdd 74bd0e325c38c63f b44ae199fd648301, edit 24f321b4618a0749, mkprompts_f 3c5951437fb81854
+2026-11-17 07:55:34   prompts 081351a1c59cf6ba ae9fc4a04ea35d75 31767f32412e88b5 e6401dc634000476 9a0f3d1901cd88b6 df37687a8fae908b 4bb77bb044387be1 8daa352ae5ce54bd
+2026-11-17 07:55:38   cold c2048 rc=0: cold 2048 ttft 1.106354961055331 qualified True
+2026-11-17 07:56:16   cold c8192 rc=0: cold 8192 ttft 4.599672314943746 qualified True
+2026-11-17 07:57:07   cold c32768 rc=0: cold 32768 ttft 17.614138546050526 qualified True
+2026-11-17 07:58:16   cold c65536 rc=0: cold 65536 ttft 35.13207976904232 qualified True
+2026-11-17 07:58:54   cold f9600a rc=0: cold 9600 ttft 5.3413794439984486 qualified True
+2026-11-17 07:59:48   cold f38400a rc=0: cold 38400 ttft 20.617775766993873 qualified True
+2026-11-17 08:00:25   cold f9600b rc=0: cold 9600 ttft 5.318715836037882 qualified True
+2026-11-17 08:01:19   cold f38400b rc=0: cold 38400 ttft 20.620723142987117 qualified True
+2026-11-17 08:03:08   openai rc=0: fibonacci-raw t=1.0 51.98590398736423 | gpu-chat-no-think t=1.0 46.90223413640413 | fibonacci-raw t=0.0 63.71976713626958 | gpu-chat-no-think t=0.0 52.007707614871016
+2026-11-17 08:07:03   decode rc=0: x1 69.0/s agg 69.0 gap 56.936 ms tpc 3.765 alone 3/0/0 serial 8/0/0 | x4 24.6/s agg 91.1 gap 121.324 ms tpc 2.934 alone 12/0/0 serial 8/0/0 | x8 14.9/s agg 99.6 gap 201.381 ms tpc 2.768 alone 24/0/0 serial 8/0/0
+2026-11-17 08:08:28   edit rc=0: x1 157.2/s agg 157.2 gap 74.669 ms tpc 14.222 alone 1/0/0 serial 4/0/0 | x4 31.2/s agg 107.0 gap 111.381 ms tpc 3.894 alone 4/0/0 serial 4/0/0
+fbench rf3cmb end

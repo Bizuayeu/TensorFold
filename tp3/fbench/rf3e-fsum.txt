@@ -1,0 +1,28 @@
+figure (gate: *)                            rf3dma     rf3emb     rf3emc     rf3eha     rf3ehb
+  cold 2048 s                                1.095      1.099      1.076      1.099      1.094  loss +0.59% range 2.07% within
+  cold 8192 s                                4.597      4.602      4.599      4.596      4.599  loss -0.04% range 0.11% within
+* cold 9600 s (mean of two)                  5.347      5.353      5.325      5.339      5.348  loss +0.04% range 0.54% within
+  cold 32768 s                              17.706     17.641     17.641     17.605     17.655  loss -0.18% range 0.37% faster
+* cold 38400 s (mean of two)                20.708     20.668     20.616     20.632     20.658  loss -0.09% range 0.44% within
+  cold 65536 s                              35.344     35.231     35.107     35.161     35.219  loss -0.11% range 0.67% within
+  openai fibonacci-raw t=1.0 tok/s          51.949      50.88     51.852     51.553     52.059  loss -0.48% range 2.07% within
+  openai gpu-chat-no-think t=1.0 tok/s      48.042     46.325     46.365     46.519     46.544  loss +0.81% range 3.66% within
+  openai fibonacci-raw t=0.0 tok/s          63.905      62.86     63.428     61.082     61.734  loss +3.14% range 1.65% slower
+  openai gpu-chat-no-think t=0.0 tok/s      51.286     51.537     51.829     52.119     51.267  loss -0.28% range 1.05% within
+* decode x1 per stream tok/s                  70.0       69.5       69.0       68.2       69.0  loss +1.29% range 1.44% open
+* decode x4 per stream tok/s                  24.4       24.4       24.4       24.1       24.4  loss +0.61% range 0.00% slower
+* decode x4 aggregate tok/s                   90.5       90.3       90.9       90.3       91.0  loss -0.09% range 0.66% within
+* decode x8 per stream tok/s                  14.6       14.9       14.9       14.9       14.9  loss -0.68% range 2.03% within
+* decode x8 aggregate tok/s                   97.8       99.5       99.9       99.6       99.5  loss -0.49% range 2.12% within
+  edit x1 per stream tok/s                   160.0      149.6      156.9      160.1      156.5  loss -1.80% range 6.69% within
+  edit x4 per stream tok/s                    29.8       29.8       30.5       30.4       30.4  loss -1.22% range 2.33% within
+  edit x4 aggregate tok/s                    103.0      101.1      103.8      102.7      102.7  loss -0.06% range 2.63% within
+exactness: every cell, greedy row and cold prompt holds
+note: openai fibonacci-raw t=1.0: the arms' token_sha agree
+note: openai gpu-chat-no-think t=1.0: the arms' token_sha agree
+memory rf3dma   model 64.11 GiB, 8 streams, 5070 pages (31.56 GiB), 327 MiB fixed, 39.1 GiB left, kept 32, loaded in 46.3 s
+memory rf3emb   model 64.11 GiB, 8 streams, 5071 pages (31.57 GiB), 327 MiB fixed, 39.1 GiB left, kept 32, loaded in 46.0 s
+memory rf3emc   model 64.11 GiB, 8 streams, 5089 pages (31.68 GiB), 327 MiB fixed, 39.2 GiB left, kept 32, loaded in 46.1 s
+memory rf3eha   model 64.11 GiB, 8 streams, 5074 pages (31.59 GiB), 327 MiB fixed, 39.1 GiB left, kept 32, loaded in 46.0 s
+memory rf3ehb   model 64.11 GiB, 8 streams, 5086 pages (31.66 GiB), 327 MiB fixed, 39.1 GiB left, kept 32, loaded in 46.2 s
+fsum: 1 slower gate figures, 1 slower receipt figures, 0 exactness failures, 18 figures

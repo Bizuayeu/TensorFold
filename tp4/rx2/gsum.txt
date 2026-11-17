@@ -1,0 +1,20 @@
+rxma: end, client ac167c3342d4f43f, ids 54c6382bf88d70ba, levels [1, 4, 8], 256 tokens, 3 reps, version 1.2.9
+rxh: end, client ac167c3342d4f43f, ids 54c6382bf88d70ba, levels [1, 4, 8], 256 tokens, 3 reps, version 1.2.9
+rxmb: end, client ac167c3342d4f43f, ids 54c6382bf88d70ba, levels [1, 4, 8], 256 tokens, 3 reps, version 1.2.9
+cell                    rxma         rxh        rxmb     /rxma     /rxma   spread %   same replies
+4K x1                 26.492      26.459      26.433    -0.13%    -0.22%   1.42 0.50 0.14   yes yes
+4K x4                 47.960      48.010      48.027    +0.10%    +0.14%   1.35 0.24 0.12   yes yes
+4K x8                 71.657      71.774      71.735    +0.16%    +0.11%   0.13 0.07 0.28   yes yes
+64K x1                26.878      26.852      26.894    -0.10%    +0.06%   0.19 0.31 0.24   yes yes
+64K x4                49.657      48.779      49.267    -1.77%    -0.78%   0.78 0.64 0.85   yes yes
+64K x8                72.158      72.168      72.091    +0.01%    -0.09%   0.70 0.16 0.26   yes yes
+256K x1               27.608      27.528      27.691    -0.29%    +0.30%   0.05 0.21 0.41   yes yes
+256K x4               50.152      50.159      50.176    +0.01%    +0.05%   0.09 0.16 0.35   yes yes
+256K x8               73.282      73.551      73.280    +0.37%    -0.00%   0.83 0.80 0.16   yes yes
+1016K x1              30.502      30.508      30.534    +0.02%    +0.10%   0.31 0.05 0.19   yes yes
+1016K x4              62.628      63.013      62.588    +0.62%    -0.06%   0.05 0.78 0.40   yes yes
+1016K x8              99.101      99.535      99.201    +0.44%    +0.10%   0.22 0.66 0.21   yes yes
+geometric mean over 12 cells every label counted:
+  rxma     48.477 ms, gpu 44-56 C, 2190-2190 MHz
+  rxh      48.454 ms (-0.05%), gpu 47-56 C, 2190-2190 MHz
+  rxmb     48.464 ms (-0.03%), gpu 47-55 C, 2190-2190 MHz

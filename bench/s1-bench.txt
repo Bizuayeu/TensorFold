@@ -1,0 +1,90 @@
+glm-score-bench: 11 layers a pass, median of 15 reps, ms for the whole pass
+ctx 1024 rows 1 (np 512, nb 8, decodeLoop 1): tf_glm_scores 0.046 / 0.046 (A/A 0.00%, 15.6 GB/s of keys a row), new loop 1 (decodeLoop) 0.059, new loop 1 (376) 0.060, new loop 1 0.059, new loop 2 0.073, new loop 4 0.114, new loop 8 0.134, new loop 16 0.134
+ctx 1024 rows 2 (np 512, nb 8, decodeLoop 1): tf_glm_scores 0.045 / 0.045 (A/A 0.07%, 15.8 GB/s of keys a row), new loop 1 (decodeLoop) 0.068, new loop 1 (376) 0.068, new loop 1 0.068, new loop 2 0.082, new loop 4 0.115, new loop 8 0.135, new loop 16 0.135, 2 launches of a row 0.090
+ctx 1024 rows 4 (np 512, nb 8, decodeLoop 1): tf_glm_scores 0.045 / 0.045 (A/A 0.00%, 15.8 GB/s of keys a row), new loop 1 (decodeLoop) 0.068, new loop 1 (376) 0.068, new loop 1 0.068, new loop 2 0.090, new loop 4 0.135, new loop 8 0.135, new loop 16 0.135, 4 launches of a row 0.180
+ctx 1024 rows 8 (np 512, nb 8, decodeLoop 1): tf_glm_scores 0.045 / 0.045 (A/A 0.07%, 15.8 GB/s of keys a row), new loop 1 (decodeLoop) 0.090, new loop 1 (376) 0.090, new loop 1 0.090, new loop 2 0.113, new loop 4 0.180, new loop 8 0.203, new loop 16 0.203, 8 launches of a row 0.361
+ctx 1024 rows 16 (np 512, nb 8, decodeLoop 1): tf_glm_scores 0.068 / 0.068 (A/A 0.00%, 10.5 GB/s of keys a row), new loop 1 (decodeLoop) 0.090, new loop 1 (376) 0.090, new loop 1 0.090, new loop 2 0.113, new loop 4 0.180, new loop 8 0.203, new loop 16 0.203
+ctx 1024 rows 32 (np 512, nb 8, decodeLoop 1): tf_glm_scores 0.068 / 0.068 (A/A 0.05%, 10.3 GB/s of keys a row), new loop 1 (decodeLoop) 0.113, new loop 1 (376) 0.113, new loop 1 0.113, new loop 2 0.119, new loop 4 0.180, new loop 8 0.203, new loop 16 0.203
+ctx 2048 rows 1 (np 1024, nb 8, decodeLoop 1): tf_glm_scores 0.045 / 0.045 (A/A 0.14%, 31.8 GB/s of keys a row), new loop 1 (decodeLoop) 0.068, new loop 1 (376) 0.068, new loop 1 0.068, new loop 2 0.084, new loop 4 0.115, new loop 8 0.203, new loop 16 0.203
+ctx 2048 rows 2 (np 1024, nb 8, decodeLoop 1): tf_glm_scores 0.045 / 0.045 (A/A 0.07%, 31.7 GB/s of keys a row), new loop 1 (decodeLoop) 0.068, new loop 1 (376) 0.068, new loop 1 0.068, new loop 2 0.090, new loop 4 0.123, new loop 8 0.203, new loop 16 0.203, 2 launches of a row 0.090
+ctx 2048 rows 4 (np 1024, nb 8, decodeLoop 1): tf_glm_scores 0.045 / 0.045 (A/A 0.07%, 31.7 GB/s of keys a row), new loop 1 (decodeLoop) 0.068, new loop 1 (376) 0.068, new loop 1 0.068, new loop 2 0.090, new loop 4 0.135, new loop 8 0.203, new loop 16 0.205, 4 launches of a row 0.180
+ctx 2048 rows 8 (np 1024, nb 8, decodeLoop 1): tf_glm_scores 0.049 / 0.049 (A/A 0.00%, 29.0 GB/s of keys a row), new loop 1 (decodeLoop) 0.090, new loop 1 (376) 0.090, new loop 1 0.090, new loop 2 0.115, new loop 4 0.180, new loop 8 0.316, new loop 16 0.316, 8 launches of a row 0.361
+ctx 2048 rows 16 (np 1024, nb 8, decodeLoop 1): tf_glm_scores 0.068 / 0.068 (A/A 0.14%, 21.1 GB/s of keys a row), new loop 1 (decodeLoop) 0.090, new loop 1 (376) 0.090, new loop 1 0.090, new loop 2 0.115, new loop 4 0.180, new loop 8 0.316, new loop 16 0.316
+ctx 2048 rows 32 (np 1024, nb 8, decodeLoop 1): tf_glm_scores 0.090 / 0.090 (A/A 0.04%, 15.7 GB/s of keys a row), new loop 1 (decodeLoop) 0.113, new loop 1 (376) 0.113, new loop 1 0.113, new loop 2 0.119, new loop 4 0.180, new loop 8 0.316, new loop 16 0.316
+ctx 4096 rows 1 (np 2048, nb 16, decodeLoop 1): tf_glm_scores 0.046 / 0.045 (A/A 1.67%, 62.6 GB/s of keys a row), new loop 1 (decodeLoop) 0.068, new loop 1 (376) 0.069, new loop 1 0.068, new loop 2 0.089, new loop 4 0.117, new loop 8 0.203, new loop 16 0.361
+ctx 4096 rows 2 (np 2048, nb 16, decodeLoop 1): tf_glm_scores 0.045 / 0.045 (A/A 0.07%, 63.5 GB/s of keys a row), new loop 1 (decodeLoop) 0.068, new loop 1 (376) 0.068, new loop 1 0.068, new loop 2 0.090, new loop 4 0.123, new loop 8 0.203, new loop 16 0.361, 2 launches of a row 0.090
+ctx 4096 rows 4 (np 2048, nb 16, decodeLoop 1): tf_glm_scores 0.051 / 0.050 (A/A 3.12%, 56.2 GB/s of keys a row), new loop 1 (decodeLoop) 0.068, new loop 1 (376) 0.068, new loop 1 0.068, new loop 2 0.090, new loop 4 0.135, new loop 8 0.203, new loop 16 0.383, 4 launches of a row 0.180
+ctx 4096 rows 8 (np 2048, nb 16, decodeLoop 1): tf_glm_scores 0.068 / 0.068 (A/A 0.00%, 42.4 GB/s of keys a row), new loop 1 (decodeLoop) 0.090, new loop 1 (376) 0.090, new loop 1 0.090, new loop 2 0.115, new loop 4 0.180, new loop 8 0.316, new loop 16 0.570, 8 launches of a row 0.361
+ctx 4096 rows 16 (np 2048, nb 16, decodeLoop 1): tf_glm_scores 0.090 / 0.090 (A/A 0.11%, 31.8 GB/s of keys a row), new loop 1 (decodeLoop) 0.113, new loop 1 (376) 0.113, new loop 1 0.113, new loop 2 0.119, new loop 4 0.181, new loop 8 0.316, new loop 16 0.572
+ctx 4096 rows 32 (np 2048, nb 16, decodeLoop 1): tf_glm_scores 0.135 / 0.135 (A/A 0.02%, 21.1 GB/s of keys a row), new loop 1 (decodeLoop) 0.158, new loop 1 (376) 0.158, new loop 1 0.158, new loop 2 0.136, new loop 4 0.181, new loop 8 0.316, new loop 16 0.574
+ctx 8192 rows 1 (np 4096, nb 32, decodeLoop 1): tf_glm_scores 0.045 / 0.045 (A/A 0.21%, 127.1 GB/s of keys a row), new loop 1 (decodeLoop) 0.068, new loop 1 (376) 0.068, new loop 1 0.068, new loop 2 0.090, new loop 4 0.117, new loop 8 0.203, new loop 16 0.361
+ctx 8192 rows 2 (np 4096, nb 32, decodeLoop 1): tf_glm_scores 0.062 / 0.061 (A/A 1.76%, 93.5 GB/s of keys a row), new loop 1 (decodeLoop) 0.068, new loop 1 (376) 0.068, new loop 1 0.068, new loop 2 0.090, new loop 4 0.125, new loop 8 0.203, new loop 16 0.361, 2 launches of a row 0.090
+ctx 8192 rows 4 (np 4096, nb 32, decodeLoop 1): tf_glm_scores 0.068 / 0.068 (A/A 0.05%, 85.0 GB/s of keys a row), new loop 1 (decodeLoop) 0.068, new loop 1 (376) 0.068, new loop 1 0.068, new loop 2 0.090, new loop 4 0.135, new loop 8 0.203, new loop 16 0.383, 4 launches of a row 0.180
+ctx 8192 rows 8 (np 4096, nb 32, decodeLoop 1): tf_glm_scores 0.090 / 0.090 (A/A 0.04%, 63.8 GB/s of keys a row), new loop 1 (decodeLoop) 0.113, new loop 1 (376) 0.113, new loop 1 0.113, new loop 2 0.121, new loop 4 0.180, new loop 8 0.316, new loop 16 0.572, 8 launches of a row 0.361
+ctx 8192 rows 16 (np 4096, nb 32, decodeLoop 1): tf_glm_scores 0.135 / 0.135 (A/A 0.00%, 42.5 GB/s of keys a row), new loop 1 (decodeLoop) 0.158, new loop 1 (376) 0.158, new loop 1 0.158, new loop 2 0.135, new loop 4 0.181, new loop 8 0.316, new loop 16 0.572
+ctx 8192 rows 32 (np 4096, nb 32, decodeLoop 1): tf_glm_scores 0.230 / 0.232 (A/A 0.92%, 25.0 GB/s of keys a row), new loop 1 (decodeLoop) 0.211, new loop 1 (376) 0.211, new loop 1 0.211, new loop 2 0.225, new loop 4 0.203, new loop 8 0.316, new loop 16 0.576
+ctx 16384 rows 1 (np 8192, nb 64, decodeLoop 1): tf_glm_scores 0.068 / 0.068 (A/A 0.14%, 169.9 GB/s of keys a row), new loop 1 (decodeLoop) 0.076, new loop 1 (376) 0.076, new loop 1 0.076, new loop 2 0.090, new loop 4 0.125, new loop 8 0.203, new loop 16 0.361
+ctx 16384 rows 2 (np 8192, nb 64, decodeLoop 1): tf_glm_scores 0.068 / 0.068 (A/A 0.05%, 169.9 GB/s of keys a row), new loop 1 (decodeLoop) 0.090, new loop 1 (376) 0.090, new loop 1 0.091, new loop 2 0.090, new loop 4 0.129, new loop 8 0.203, new loop 16 0.361, 2 launches of a row 0.135
+ctx 16384 rows 4 (np 8192, nb 64, decodeLoop 1): tf_glm_scores 0.090 / 0.090 (A/A 0.04%, 127.5 GB/s of keys a row), new loop 1 (decodeLoop) 0.090, new loop 1 (376) 0.090, new loop 1 0.090, new loop 2 0.090, new loop 4 0.135, new loop 8 0.205, new loop 16 0.383, 4 launches of a row 0.271
+ctx 16384 rows 8 (np 8192, nb 64, decodeLoop 2): tf_glm_scores 0.135 / 0.135 (A/A 0.00%, 85.1 GB/s of keys a row), new loop 2 (decodeLoop) 0.135, new loop 1 (376) 0.158, new loop 1 0.158, new loop 2 0.135, new loop 4 0.181, new loop 8 0.316, new loop 16 0.572, 8 launches of a row 0.541
+ctx 16384 rows 16 (np 8192, nb 64, decodeLoop 2): tf_glm_scores 0.227 / 0.226 (A/A 0.31%, 50.8 GB/s of keys a row), new loop 2 (decodeLoop) 0.226, new loop 1 (376) 0.211, new loop 1 0.211, new loop 2 0.226, new loop 4 0.203, new loop 8 0.316, new loop 16 0.576
+ctx 16384 rows 32 (np 8192, nb 64, decodeLoop 2): tf_glm_scores 0.428 / 0.428 (A/A 0.01%, 26.9 GB/s of keys a row), new loop 2 (decodeLoop) 0.297, new loop 1 (376) 0.324, new loop 1 0.328, new loop 2 0.297, new loop 4 0.337, new loop 8 0.338, new loop 16 0.580
+ctx 65536 rows 1 (np 32768, nb 256, decodeLoop 1): tf_glm_scores 0.237 / 0.239 (A/A 0.78%, 194.8 GB/s of keys a row), new loop 1 (decodeLoop) 0.236, new loop 1 (376) 0.237, new loop 1 0.236, new loop 2 0.246, new loop 4 0.239, new loop 8 0.251, new loop 16 0.384
+ctx 65536 rows 2 (np 32768, nb 256, decodeLoop 1): tf_glm_scores 0.235 / 0.233 (A/A 0.89%, 196.5 GB/s of keys a row), new loop 1 (decodeLoop) 0.242, new loop 1 (376) 0.243, new loop 1 0.245, new loop 2 0.244, new loop 4 0.247, new loop 8 0.254, new loop 16 0.384, 2 launches of a row 0.348
+ctx 65536 rows 4 (np 32768, nb 256, decodeLoop 1): tf_glm_scores 0.257 / 0.252 (A/A 1.81%, 179.7 GB/s of keys a row), new loop 1 (decodeLoop) 0.259, new loop 1 (376) 0.260, new loop 1 0.260, new loop 2 0.255, new loop 4 0.256, new loop 8 0.256, new loop 16 0.384, 4 launches of a row 0.574
+ctx 65536 rows 8 (np 32768, nb 256, decodeLoop 2): tf_glm_scores 0.426 / 0.426 (A/A 0.01%, 108.2 GB/s of keys a row), new loop 2 (decodeLoop) 0.322, new loop 1 (376) 0.357, new loop 1 0.357, new loop 2 0.322, new loop 4 0.346, new loop 8 0.340, new loop 16 0.587, 8 launches of a row 1.026
+ctx 65536 rows 16 (np 32768, nb 256, decodeLoop 4): tf_glm_scores 0.799 / 0.800 (A/A 0.12%, 57.7 GB/s of keys a row), new loop 4 (decodeLoop) 0.494, new loop 1 (376) 0.589, new loop 1 0.589, new loop 2 0.514, new loop 4 0.496, new loop 8 0.564, new loop 16 0.607
+ctx 65536 rows 32 (np 32768, nb 256, decodeLoop 8): tf_glm_scores 1.582 / 1.586 (A/A 0.25%, 29.1 GB/s of keys a row), new loop 8 (decodeLoop) 0.818, new loop 1 (376) 1.001, new loop 1 0.999, new loop 2 0.837, new loop 4 0.839, new loop 8 0.816, new loop 16 1.015
+glm-score-bench share: streams of a row over keys whose first blocks they share (TF_GLM_DSHARE's launches), ms for the whole pass
+share ctx 65536 streams 2 blocks 2 of 256: launches of a row 0.346, shared 0.421 (0.074 ms, 21.4%)
+share ctx 65536 streams 2 blocks 8 of 256: launches of a row 0.346, shared 0.416 (0.070 ms, 20.1%)
+share ctx 65536 streams 2 blocks 32 of 256: launches of a row 0.346, shared 0.421 (0.075 ms, 21.6%)
+share ctx 65536 streams 2 blocks 128 of 256: launches of a row 0.346, shared 0.389 (0.043 ms, 12.4%)
+share ctx 65536 streams 2 blocks 256 of 256: launches of a row 0.346, shared 0.249 (-0.097 ms, -28.1%)
+share ctx 65536 streams 4 blocks 2 of 256: launches of a row 0.572, shared 0.646 (0.075 ms, 13.1%)
+share ctx 65536 streams 4 blocks 8 of 256: launches of a row 0.572, shared 0.643 (0.072 ms, 12.6%)
+share ctx 65536 streams 4 blocks 32 of 256: launches of a row 0.572, shared 0.645 (0.074 ms, 12.9%)
+share ctx 65536 streams 4 blocks 128 of 256: launches of a row 0.572, shared 0.592 (0.021 ms, 3.6%)
+share ctx 65536 streams 4 blocks 256 of 256: launches of a row 0.572, shared 0.267 (-0.304 ms, -53.2%)
+share ctx 65536 streams 8 blocks 2 of 256: launches of a row 1.023, shared 1.120 (0.096 ms, 9.4%)
+share ctx 65536 streams 8 blocks 8 of 256: launches of a row 1.023, shared 1.115 (0.092 ms, 9.0%)
+share ctx 65536 streams 8 blocks 32 of 256: launches of a row 1.023, shared 1.121 (0.097 ms, 9.5%)
+share ctx 65536 streams 8 blocks 128 of 256: launches of a row 1.023, shared 1.019 (-0.004 ms, -0.4%)
+share ctx 65536 streams 8 blocks 256 of 256: launches of a row 1.023, shared 0.327 (-0.696 ms, -68.1%)
+share ctx 262144 streams 2 blocks 2 of 1024: launches of a row 1.188, shared 1.266 (0.078 ms, 6.6%)
+share ctx 262144 streams 2 blocks 8 of 1024: launches of a row 1.188, shared 1.256 (0.068 ms, 5.7%)
+share ctx 262144 streams 2 blocks 32 of 1024: launches of a row 1.188, shared 1.249 (0.062 ms, 5.2%)
+share ctx 262144 streams 2 blocks 128 of 1024: launches of a row 1.188, shared 1.228 (0.040 ms, 3.4%)
+share ctx 262144 streams 2 blocks 512 of 1024: launches of a row 1.188, shared 1.111 (-0.076 ms, -6.4%)
+share ctx 262144 streams 2 blocks 1024 of 1024: launches of a row 1.188, shared 0.832 (-0.356 ms, -30.0%)
+share ctx 262144 streams 4 blocks 2 of 1024: launches of a row 1.881, shared 1.969 (0.088 ms, 4.7%)
+share ctx 262144 streams 4 blocks 8 of 1024: launches of a row 1.881, shared 1.962 (0.081 ms, 4.3%)
+share ctx 262144 streams 4 blocks 32 of 1024: launches of a row 1.881, shared 1.903 (0.021 ms, 1.1%)
+share ctx 262144 streams 4 blocks 128 of 1024: launches of a row 1.881, shared 1.846 (-0.035 ms, -1.9%)
+share ctx 262144 streams 4 blocks 512 of 1024: launches of a row 1.881, shared 1.495 (-0.386 ms, -20.5%)
+share ctx 262144 streams 4 blocks 1024 of 1024: launches of a row 1.881, shared 0.848 (-1.033 ms, -54.9%)
+share ctx 262144 streams 8 blocks 2 of 1024: launches of a row 3.242, shared 3.361 (0.119 ms, 3.7%)
+share ctx 262144 streams 8 blocks 8 of 1024: launches of a row 3.242, shared 3.345 (0.102 ms, 3.2%)
+share ctx 262144 streams 8 blocks 32 of 1024: launches of a row 3.242, shared 3.239 (-0.003 ms, -0.1%)
+share ctx 262144 streams 8 blocks 128 of 1024: launches of a row 3.242, shared 3.119 (-0.123 ms, -3.8%)
+share ctx 262144 streams 8 blocks 512 of 1024: launches of a row 3.242, shared 2.330 (-0.913 ms, -28.1%)
+share ctx 262144 streams 8 blocks 1024 of 1024: launches of a row 3.242, shared 0.923 (-2.319 ms, -71.5%)
+share ctx 1040384 streams 2 blocks 2 of 4064: launches of a row 6.276, shared 6.454 (0.177 ms, 2.8%)
+share ctx 1040384 streams 2 blocks 8 of 4064: launches of a row 6.276, shared 6.315 (0.039 ms, 0.6%)
+share ctx 1040384 streams 2 blocks 32 of 4064: launches of a row 6.276, shared 6.308 (0.032 ms, 0.5%)
+share ctx 1040384 streams 2 blocks 128 of 4064: launches of a row 6.276, shared 6.248 (-0.029 ms, -0.5%)
+share ctx 1040384 streams 2 blocks 512 of 4064: launches of a row 6.276, shared 6.031 (-0.246 ms, -3.9%)
+share ctx 1040384 streams 2 blocks 4064 of 4064: launches of a row 6.276, shared 3.411 (-2.865 ms, -45.6%)
+share ctx 1040384 streams 4 blocks 2 of 4064: launches of a row 12.831, shared 12.579 (-0.252 ms, -2.0%)
+share ctx 1040384 streams 4 blocks 8 of 4064: launches of a row 12.831, shared 12.555 (-0.276 ms, -2.2%)
+share ctx 1040384 streams 4 blocks 32 of 4064: launches of a row 12.831, shared 12.505 (-0.326 ms, -2.5%)
+share ctx 1040384 streams 4 blocks 128 of 4064: launches of a row 12.831, shared 12.315 (-0.517 ms, -4.0%)
+share ctx 1040384 streams 4 blocks 512 of 4064: launches of a row 12.831, shared 11.463 (-1.369 ms, -10.7%)
+share ctx 1040384 streams 4 blocks 4064 of 4064: launches of a row 12.831, shared 3.251 (-9.581 ms, -74.7%)
+share ctx 1040384 streams 8 blocks 2 of 4064: launches of a row 24.948, shared 25.079 (0.131 ms, 0.5%)
+share ctx 1040384 streams 8 blocks 8 of 4064: launches of a row 24.948, shared 25.035 (0.087 ms, 0.3%)
+share ctx 1040384 streams 8 blocks 32 of 4064: launches of a row 24.948, shared 24.923 (-0.025 ms, -0.1%)
+share ctx 1040384 streams 8 blocks 128 of 4064: launches of a row 24.948, shared 24.491 (-0.457 ms, -1.8%)
+share ctx 1040384 streams 8 blocks 512 of 4064: launches of a row 24.948, shared 22.562 (-2.386 ms, -9.6%)
+share ctx 1040384 streams 8 blocks 4064 of 4064: launches of a row 24.948, shared 3.560 (-21.388 ms, -85.7%)
+PASS glm-score-bench: every arm wrote tf_glm_scores' bytes at 6 contexts and 6 row counts, and the shared form at 3 contexts

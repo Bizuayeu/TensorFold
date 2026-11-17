@@ -1,0 +1,33 @@
+figure (gate: *)                            rf3gma     rf3gmb     rf3gmc     rf3gmd     rf3gza     rf3gzb
+  cold 2048 s                                1.106      1.088      1.091       1.09      1.094      1.103  loss +0.43% range 1.71% within
+  cold 8192 s                                4.615      4.585      4.625      4.598      4.585      4.601  loss -0.28% range 0.87% within
+* cold 9600 s (mean of two)                  5.336      5.337      5.334      5.332      5.337       5.33  loss -0.02% range 0.10% within
+  cold 32768 s                              17.596     17.634     17.821     17.617     17.631     17.812  loss +0.31% range 1.27% within
+* cold 38400 s (mean of two)                20.605      20.61     20.662     20.606     20.615     20.589  loss -0.09% range 0.28% faster
+  cold 65536 s                              35.086      35.15      35.21     35.162     35.138     35.072  loss -0.13% range 0.35% within
+  openai fibonacci-raw t=1.0 tok/s           52.25     50.892     51.008     52.543     52.852     51.594  loss -1.06% range 3.20% within
+  openai gpu-chat-no-think t=1.0 tok/s      47.678     46.806     47.482     46.371     47.169     46.688  loss +0.33% range 2.78% within
+  openai fibonacci-raw t=0.0 tok/s          63.038     62.866     63.547     64.028     62.576     62.162  loss +1.58% range 1.83% open
+  openai gpu-chat-no-think t=0.0 tok/s       51.97     51.185     51.389     51.718     51.814     51.288  loss +0.03% range 1.52% within
+exactness: 12 failures
+  rf3gma decode: no report
+  rf3gma edit: no report
+  rf3gmb decode: no report
+  rf3gmb edit: no report
+  rf3gmc decode: no report
+  rf3gmc edit: no report
+  rf3gmd decode: no report
+  rf3gmd edit: no report
+  rf3gza decode: no report
+  rf3gza edit: no report
+  rf3gzb decode: no report
+  rf3gzb edit: no report
+note: openai fibonacci-raw t=1.0: the arms' token_sha agree
+note: openai gpu-chat-no-think t=1.0: the arms' token_sha agree
+memory rf3gma   model 64.11 GiB, 8 streams, 5095 pages (31.72 GiB), 327 MiB fixed, 39.2 GiB left, kept 32, loaded in 98.9 s
+memory rf3gmb   model 64.11 GiB, 8 streams, 5104 pages (31.78 GiB), 327 MiB fixed, 39.3 GiB left, kept 32, loaded in 46.1 s
+memory rf3gmc   model 64.11 GiB, 8 streams, 5103 pages (31.77 GiB), 327 MiB fixed, 39.3 GiB left, kept 32, loaded in 45.8 s
+memory rf3gmd   model 64.11 GiB, 8 streams, 5103 pages (31.77 GiB), 327 MiB fixed, 39.3 GiB left, kept 32, loaded in 46.2 s
+memory rf3gza   model 64.11 GiB, 8 streams, 5099 pages (31.74 GiB), 327 MiB fixed, 39.2 GiB left, kept 32, loaded in 46.3 s
+memory rf3gzb   model 64.11 GiB, 8 streams, 5095 pages (31.72 GiB), 327 MiB fixed, 39.2 GiB left, kept 32, loaded in 46.2 s
+fsum: 0 slower gate figures, 0 slower receipt figures, 12 exactness failures, 10 figures

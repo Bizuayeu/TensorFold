@@ -1,0 +1,322 @@
+{
+ "main": [
+  "rf3rma",
+  "rf3rmb",
+  "rf3rmc"
+ ],
+ "head": [
+  "rf3rha",
+  "rf3rhb"
+ ],
+ "figures": [
+  {
+   "figure": "cold 2048 s",
+   "gate": false,
+   "values": {
+    "rf3rma": 1.1095417030155659,
+    "rf3rmb": 1.0836582139600068,
+    "rf3rmc": 1.0986972349928692,
+    "rf3rha": 1.0930950359907001,
+    "rf3rhb": 1.078323066001758
+   },
+   "loss": -1.06,
+   "spread": 2.36,
+   "verdict": "within"
+  },
+  {
+   "figure": "cold 8192 s",
+   "gate": false,
+   "values": {
+    "rf3rma": 4.559497490059584,
+    "rf3rmb": 4.587922087986954,
+    "rf3rmc": 4.601419226033613,
+    "rf3rha": 4.59632757701911,
+    "rf3rhb": 4.593182725016959
+   },
+   "loss": 0.26,
+   "spread": 0.91,
+   "verdict": "within"
+  },
+  {
+   "figure": "cold 9600 s (mean of two)",
+   "gate": true,
+   "values": {
+    "rf3rma": 5.321311007428449,
+    "rf3rmb": 5.337808214535471,
+    "rf3rmc": 5.3475755414692685,
+    "rf3rha": 5.3435547144617885,
+    "rf3rhb": 5.323277108022012
+   },
+   "loss": -0.04,
+   "spread": 0.49,
+   "verdict": "within"
+  },
+  {
+   "figure": "cold 32768 s",
+   "gate": false,
+   "values": {
+    "rf3rma": 17.548046304029413,
+    "rf3rmb": 17.66530260699801,
+    "rf3rmc": 17.64064374496229,
+    "rf3rha": 17.63494840497151,
+    "rf3rhb": 17.640194730018266
+   },
+   "loss": 0.11,
+   "spread": 0.67,
+   "verdict": "within"
+  },
+  {
+   "figure": "cold 38400 s (mean of two)",
+   "gate": true,
+   "values": {
+    "rf3rma": 20.545041321020108,
+    "rf3rmb": 20.725410040002316,
+    "rf3rmc": 20.64439788699383,
+    "rf3rha": 20.655636542011052,
+    "rf3rhb": 20.6095942275133
+   },
+   "loss": -0.03,
+   "spread": 0.87,
+   "verdict": "within"
+  },
+  {
+   "figure": "cold 65536 s",
+   "gate": false,
+   "values": {
+    "rf3rma": 35.00204856903292,
+    "rf3rmb": 35.21345258294605,
+    "rf3rmc": 35.202753543970175,
+    "rf3rha": 35.188503696001135,
+    "rf3rhb": 35.17951223195996
+   },
+   "loss": 0.13,
+   "spread": 0.6,
+   "verdict": "within"
+  },
+  {
+   "figure": "openai fibonacci-raw t=1.0 tok/s",
+   "gate": false,
+   "values": {
+    "rf3rma": 51.12845122417764,
+    "rf3rmb": 51.41779816749813,
+    "rf3rmc": 51.34990955982496,
+    "rf3rha": 51.13451068078186,
+    "rf3rhb": 52.37898231621933
+   },
+   "loss": -0.89,
+   "spread": 0.56,
+   "verdict": "faster"
+  },
+  {
+   "figure": "openai gpu-chat-no-think t=1.0 tok/s",
+   "gate": false,
+   "values": {
+    "rf3rma": 46.51228674823286,
+    "rf3rmb": 46.691679077628635,
+    "rf3rmc": 46.09113906399298,
+    "rf3rha": 48.11745280520917,
+    "rf3rhb": 47.807319683016786
+   },
+   "loss": -3.3,
+   "spread": 1.29,
+   "verdict": "faster"
+  },
+  {
+   "figure": "openai fibonacci-raw t=0.0 tok/s",
+   "gate": false,
+   "values": {
+    "rf3rma": 61.90434160206892,
+    "rf3rmb": 61.17564548556122,
+    "rf3rmc": 63.622855195810295,
+    "rf3rha": 63.67335361394917,
+    "rf3rhb": 62.38266997158501
+   },
+   "loss": -1.28,
+   "spread": 3.93,
+   "verdict": "within"
+  },
+  {
+   "figure": "openai gpu-chat-no-think t=0.0 tok/s",
+   "gate": false,
+   "values": {
+    "rf3rma": 51.34945264038849,
+    "rf3rmb": 51.049578983383974,
+    "rf3rmc": 51.926030054459765,
+    "rf3rha": 51.67073040470762,
+    "rf3rhb": 51.67126141914619
+   },
+   "loss": -0.45,
+   "spread": 1.7,
+   "verdict": "within"
+  },
+  {
+   "figure": "decode x1 per stream tok/s",
+   "gate": true,
+   "values": {
+    "rf3rma": 69.3,
+    "rf3rmb": 69.2,
+    "rf3rmc": 68.2,
+    "rf3rha": 68.7,
+    "rf3rhb": 69.1
+   },
+   "loss": -0.0,
+   "spread": 1.6,
+   "verdict": "within"
+  },
+  {
+   "figure": "decode x4 per stream tok/s",
+   "gate": true,
+   "values": {
+    "rf3rma": 24.7,
+    "rf3rmb": 24.4,
+    "rf3rmc": 24.7,
+    "rf3rha": 24.5,
+    "rf3rhb": 24.2
+   },
+   "loss": 1.02,
+   "spread": 1.22,
+   "verdict": "open"
+  },
+  {
+   "figure": "decode x4 aggregate tok/s",
+   "gate": true,
+   "values": {
+    "rf3rma": 91.0,
+    "rf3rmb": 90.4,
+    "rf3rmc": 91.2,
+    "rf3rha": 90.5,
+    "rf3rhb": 89.4
+   },
+   "loss": 1.01,
+   "spread": 0.88,
+   "verdict": "slower"
+  },
+  {
+   "figure": "decode x8 per stream tok/s",
+   "gate": true,
+   "values": {
+    "rf3rma": 14.6,
+    "rf3rmb": 14.7,
+    "rf3rmc": 14.9,
+    "rf3rha": 14.9,
+    "rf3rhb": 14.6
+   },
+   "loss": -0.11,
+   "spread": 2.04,
+   "verdict": "within"
+  },
+  {
+   "figure": "decode x8 aggregate tok/s",
+   "gate": true,
+   "values": {
+    "rf3rma": 99.9,
+    "rf3rmb": 99.0,
+    "rf3rmc": 98.8,
+    "rf3rha": 99.7,
+    "rf3rhb": 97.1
+   },
+   "loss": 0.84,
+   "spread": 1.11,
+   "verdict": "open"
+  },
+  {
+   "figure": "edit x1 per stream tok/s",
+   "gate": false,
+   "values": {
+    "rf3rma": 157.3,
+    "rf3rmb": 155.2,
+    "rf3rmc": 156.0,
+    "rf3rha": 160.0,
+    "rf3rhb": 155.9
+   },
+   "loss": -1.14,
+   "spread": 1.34,
+   "verdict": "faster"
+  },
+  {
+   "figure": "edit x4 per stream tok/s",
+   "gate": false,
+   "values": {
+    "rf3rma": 30.6,
+    "rf3rmb": 31.2,
+    "rf3rmc": 31.4,
+    "rf3rha": 30.4,
+    "rf3rhb": 30.5
+   },
+   "loss": 1.98,
+   "spread": 2.58,
+   "verdict": "open"
+  },
+  {
+   "figure": "edit x4 aggregate tok/s",
+   "gate": false,
+   "values": {
+    "rf3rma": 104.0,
+    "rf3rmb": 107.4,
+    "rf3rmc": 107.0,
+    "rf3rha": 102.4,
+    "rf3rhb": 104.2
+   },
+   "loss": 2.67,
+   "spread": 3.2,
+   "verdict": "open"
+  }
+ ],
+ "exact": [],
+ "notes": [
+  "openai fibonacci-raw t=1.0: the arms' token_sha agree",
+  "openai gpu-chat-no-think t=1.0: the arms' token_sha agree"
+ ],
+ "memory": {
+  "rf3rma": {
+   "model": 64.11,
+   "streams": 8,
+   "pages": 5048,
+   "pages_gib": 31.43,
+   "fixed": 327,
+   "left": 38.9,
+   "kept": 32,
+   "load_s": 46.3
+  },
+  "rf3rmb": {
+   "model": 64.11,
+   "streams": 8,
+   "pages": 5093,
+   "pages_gib": 31.71,
+   "fixed": 327,
+   "left": 39.2,
+   "kept": 32,
+   "load_s": 46.0
+  },
+  "rf3rmc": {
+   "model": 64.11,
+   "streams": 8,
+   "pages": 5091,
+   "pages_gib": 31.69,
+   "fixed": 327,
+   "left": 39.2,
+   "kept": 32,
+   "load_s": 45.9
+  },
+  "rf3rha": {
+   "model": 64.11,
+   "streams": 8,
+   "pages": 5088,
+   "pages_gib": 31.68,
+   "fixed": 327,
+   "left": 39.2,
+   "kept": 32,
+   "load_s": 45.9
+  },
+  "rf3rhb": {
+   "model": 64.11,
+   "streams": 8,
+   "pages": 5092,
+   "pages_gib": 31.7,
+   "fixed": 327,
+   "left": 39.2,
+   "kept": 32,
+   "load_s": 46.1
+  }
+ }
+}

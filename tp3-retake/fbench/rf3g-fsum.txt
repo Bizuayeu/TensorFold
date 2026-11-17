@@ -1,0 +1,36 @@
+figure (gate: *)                            rf3gma     rf3gmb     rf3gmc     rf3gmd     rf3gha     rf3ghb     rf3ghc
+  cold 2048 s                                1.106      1.088      1.091       1.09      1.104      1.087      1.083  loss -0.21% range 1.71% within
+  cold 8192 s                                4.615      4.585      4.625      4.598      4.579      4.589      4.605  loss -0.32% range 0.87% within
+* cold 9600 s (mean of two)                  5.336      5.337      5.334      5.332      5.326      5.332      5.353  loss +0.05% range 0.10% within
+  cold 32768 s                              17.596     17.634     17.821     17.617     17.603     17.575     17.655  loss -0.32% range 1.27% within
+* cold 38400 s (mean of two)                20.605      20.61     20.662     20.606      20.59     20.595     20.642  loss -0.06% range 0.28% within
+  cold 65536 s                              35.086      35.15      35.21     35.162     35.104     35.134     35.233  loss +0.02% range 0.35% within
+  openai fibonacci-raw t=1.0 tok/s           52.25     50.892     51.008     52.543     51.834      51.57     51.428  loss +0.12% range 3.20% within
+  openai gpu-chat-no-think t=1.0 tok/s      47.678     46.806     47.482     46.371     47.959     46.985     46.024  loss +0.20% range 2.78% within
+  openai fibonacci-raw t=0.0 tok/s          63.038     62.866     63.547     64.028     62.954     62.788     63.739  loss +0.33% range 1.83% within
+  openai gpu-chat-no-think t=0.0 tok/s       51.97     51.185     51.389     51.718     51.644     51.859     51.188  loss +0.00% range 1.52% within
+exactness: 14 failures
+  rf3gma decode: no report
+  rf3gma edit: no report
+  rf3gmb decode: no report
+  rf3gmb edit: no report
+  rf3gmc decode: no report
+  rf3gmc edit: no report
+  rf3gmd decode: no report
+  rf3gmd edit: no report
+  rf3gha decode: no report
+  rf3gha edit: no report
+  rf3ghb decode: no report
+  rf3ghb edit: no report
+  rf3ghc decode: no report
+  rf3ghc edit: no report
+note: openai fibonacci-raw t=1.0: the arms' token_sha agree
+note: openai gpu-chat-no-think t=1.0: the arms' token_sha agree
+memory rf3gma   model 64.11 GiB, 8 streams, 5095 pages (31.72 GiB), 327 MiB fixed, 39.2 GiB left, kept 32, loaded in 98.9 s
+memory rf3gmb   model 64.11 GiB, 8 streams, 5104 pages (31.78 GiB), 327 MiB fixed, 39.3 GiB left, kept 32, loaded in 46.1 s
+memory rf3gmc   model 64.11 GiB, 8 streams, 5103 pages (31.77 GiB), 327 MiB fixed, 39.3 GiB left, kept 32, loaded in 45.8 s
+memory rf3gmd   model 64.11 GiB, 8 streams, 5103 pages (31.77 GiB), 327 MiB fixed, 39.3 GiB left, kept 32, loaded in 46.2 s
+memory rf3gha   model 64.11 GiB, 8 streams, 5096 pages (31.73 GiB), 327 MiB fixed, 39.2 GiB left, kept 32, loaded in 45.9 s
+memory rf3ghb   model 64.11 GiB, 8 streams, 5087 pages (31.67 GiB), 327 MiB fixed, 39.2 GiB left, kept 32, loaded in 46.2 s
+memory rf3ghc   model 64.11 GiB, 8 streams, 5097 pages (31.73 GiB), 327 MiB fixed, 39.2 GiB left, kept 32, loaded in 46.5 s
+fsum: 0 slower gate figures, 0 slower receipt figures, 14 exactness failures, 10 figures

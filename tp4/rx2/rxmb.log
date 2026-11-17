@@ -1,0 +1,71 @@
+2026-11-17 01:07:22 == grid4 rxmb begin: grid.py ac167c3342d4f43f
+2026-11-17 01:07:22 == grid rxmb begin: levels [1, 4, 8], contexts [4096, 65536, 262144, 1040384], 256 tokens, 3 reps, client ac167c3342d4f43f
+2026-11-17 01:07:22   token list 54c6382bf88d70ba: 1578844 tokens
+2026-11-17 01:07:25   prefix 4096: 2.4 s, prompt 4097, cached 0, gpu 55, 2190, 44.24
+2026-11-17 01:08:02   4096 x1 rep 1: round 26.433 ms p95 27.236 (gaps 255, window 6.8 s), ttft max 0.118 s, cached [4096], chunks a token 1.00, replies 1, gpu 48, 2190, 8.61
+2026-11-17 01:08:19   4096 x1 rep 2: round 26.464 ms p95 27.314 (gaps 255, window 6.8 s), ttft max 0.113 s, cached [4096], chunks a token 1.00, replies 1, gpu 48, 2190, 8.65
+2026-11-17 01:08:36   4096 x1 rep 3: round 26.427 ms p95 27.259 (gaps 255, window 6.8 s), ttft max 0.115 s, cached [4096], chunks a token 1.00, replies 1, gpu 49, 2190, 8.71
+2026-11-17 01:08:46   cell 4096 x1: 26.433 ms
+2026-11-17 01:09:28   4096 x4 rep 1: round 48.027 ms p95 49.176 (gaps 997, window 12.0 s), ttft max 0.670 s, cached [4096, 4096, 4096, 4096], chunks a token 1.00, replies 4, gpu 47, 2190, 8.68
+2026-11-17 01:09:51   4096 x4 rep 2: round 48.051 ms p95 49.428 (gaps 994, window 12.0 s), ttft max 0.668 s, cached [4096, 4096, 4096, 4096], chunks a token 1.00, replies 4, gpu 49, 2190, 8.75
+2026-11-17 01:10:14   4096 x4 rep 3: round 47.992 ms p95 49.103 (gaps 994, window 12.0 s), ttft max 0.669 s, cached [4096, 4096, 4096, 4096], chunks a token 1.00, replies 4, gpu 50, 2190, 8.79
+2026-11-17 01:10:24   cell 4096 x4: 48.027 ms
+2026-11-17 01:11:14   4096 x8 rep 1: round 71.550 ms p95 73.267 (gaps 1950, window 17.4 s), ttft max 1.411 s, cached [4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096], chunks a token 1.00, replies 8, gpu 48, 2190, 8.69
+2026-11-17 01:11:43   4096 x8 rep 2: round 71.735 ms p95 73.324 (gaps 1948, window 17.5 s), ttft max 1.425 s, cached [4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096], chunks a token 1.00, replies 8, gpu 50, 2190, 8.85
+2026-11-17 01:12:12   4096 x8 rep 3: round 71.747 ms p95 73.834 (gaps 1946, window 17.5 s), ttft max 1.412 s, cached [4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096], chunks a token 1.00, replies 8, gpu 51, 2190, 8.90
+2026-11-17 01:12:22   cell 4096 x8: 71.735 ms
+2026-11-17 01:13:26   prefix 65536: 33.7 s, prompt 65537, cached 4096, gpu 64, 2184, 44.18
+2026-11-17 01:14:03   65536 x1 rep 1: round 26.902 ms p95 27.889 (gaps 255, window 6.9 s), ttft max 0.122 s, cached [65536], chunks a token 1.00, replies 1, gpu 52, 2190, 8.96
+2026-11-17 01:14:20   65536 x1 rep 2: round 26.894 ms p95 27.762 (gaps 255, window 6.9 s), ttft max 0.121 s, cached [65536], chunks a token 1.00, replies 1, gpu 51, 2190, 8.96
+2026-11-17 01:14:37   65536 x1 rep 3: round 26.836 ms p95 27.585 (gaps 255, window 6.9 s), ttft max 0.121 s, cached [65536], chunks a token 1.00, replies 1, gpu 51, 2190, 8.93
+2026-11-17 01:14:47   cell 65536 x1: 26.894 ms
+2026-11-17 01:15:31   65536 x4 rep 1: round 49.084 ms p95 52.224 (gaps 996, window 12.4 s), ttft max 0.692 s, cached [65536, 65536, 65536, 65536], chunks a token 1.00, replies 4, gpu 49, 2190, 8.70
+2026-11-17 01:15:54   65536 x4 rep 2: round 49.505 ms p95 56.266 (gaps 994, window 12.5 s), ttft max 0.682 s, cached [65536, 65536, 65536, 65536], chunks a token 1.00, replies 4, gpu 50, 2190, 8.82
+2026-11-17 01:16:17   65536 x4 rep 3: round 49.267 ms p95 52.359 (gaps 994, window 12.4 s), ttft max 0.714 s, cached [65536, 65536, 65536, 65536], chunks a token 1.00, replies 4, gpu 51, 2190, 8.85
+2026-11-17 01:16:27   cell 65536 x4: 49.267 ms
+2026-11-17 01:17:17   65536 x8 rep 1: round 71.932 ms p95 74.040 (gaps 1946, window 17.5 s), ttft max 1.440 s, cached [65536, 65536, 65536, 65536, 65536, 65536, 65536, 65536], chunks a token 1.00, replies 8, gpu 49, 2190, 8.68
+2026-11-17 01:17:47   65536 x8 rep 2: round 72.123 ms p95 74.365 (gaps 1940, window 17.5 s), ttft max 1.487 s, cached [65536, 65536, 65536, 65536, 65536, 65536, 65536, 65536], chunks a token 1.00, replies 8, gpu 51, 2190, 8.84
+2026-11-17 01:18:16   65536 x8 rep 3: round 72.091 ms p95 74.128 (gaps 1938, window 17.5 s), ttft max 1.502 s, cached [65536, 65536, 65536, 65536, 65536, 65536, 65536, 65536], chunks a token 1.00, replies 8, gpu 52, 2190, 8.91
+2026-11-17 01:18:26   cell 65536 x8: 72.091 ms
+2026-11-17 01:19:33   prefix 131072: 36.3 s, prompt 131073, cached 65536, gpu 64, 2184, 45.23
+2026-11-17 01:20:39   prefix 196608: 36.8 s, prompt 196609, cached 131072, gpu 66, 2184, 45.75
+2026-11-17 01:21:47   prefix 262144: 37.2 s, prompt 262145, cached 196608, gpu 67, 2184, 46.25
+2026-11-17 01:22:24   262144 x1 rep 1: round 27.591 ms p95 28.443 (gaps 255, window 7.1 s), ttft max 0.142 s, cached [262144], chunks a token 1.00, replies 1, gpu 55, 2190, 9.20
+2026-11-17 01:22:41   262144 x1 rep 2: round 27.706 ms p95 28.678 (gaps 255, window 7.1 s), ttft max 0.140 s, cached [262144], chunks a token 1.00, replies 1, gpu 54, 2190, 9.09
+2026-11-17 01:22:58   262144 x1 rep 3: round 27.691 ms p95 28.603 (gaps 255, window 7.1 s), ttft max 0.141 s, cached [262144], chunks a token 1.00, replies 1, gpu 53, 2190, 9.09
+2026-11-17 01:23:08   cell 262144 x1: 27.691 ms
+2026-11-17 01:23:52   262144 x4 rep 1: round 50.115 ms p95 51.722 (gaps 994, window 12.5 s), ttft max 0.725 s, cached [262144, 262144, 262144, 262144], chunks a token 1.00, replies 4, gpu 51, 2190, 8.83
+2026-11-17 01:24:16   262144 x4 rep 2: round 50.176 ms p95 51.759 (gaps 995, window 12.5 s), ttft max 0.725 s, cached [262144, 262144, 262144, 262144], chunks a token 1.00, replies 4, gpu 52, 2190, 8.97
+2026-11-17 01:24:39   262144 x4 rep 3: round 50.290 ms p95 51.477 (gaps 996, window 12.6 s), ttft max 0.726 s, cached [262144, 262144, 262144, 262144], chunks a token 1.00, replies 4, gpu 52, 2190, 9.06
+2026-11-17 01:24:49   cell 262144 x4: 50.176 ms
+2026-11-17 01:25:39   262144 x8 rep 1: round 73.165 ms p95 75.369 (gaps 1946, window 17.9 s), ttft max 1.510 s, cached [262144, 262144, 262144, 262144, 262144, 262144, 262144, 262144], chunks a token 1.00, replies 8, gpu 50, 2190, 8.82
+2026-11-17 01:26:09   262144 x8 rep 2: round 73.281 ms p95 75.753 (gaps 1954, window 18.0 s), ttft max 1.454 s, cached [262144, 262144, 262144, 262144, 262144, 262144, 262144, 262144], chunks a token 1.00, replies 8, gpu 52, 2190, 8.97
+2026-11-17 01:26:39   262144 x8 rep 3: round 73.280 ms p95 75.921 (gaps 1949, window 18.0 s), ttft max 1.505 s, cached [262144, 262144, 262144, 262144, 262144, 262144, 262144, 262144], chunks a token 1.00, replies 8, gpu 53, 2190, 9.03
+2026-11-17 01:26:50   cell 262144 x8: 73.280 ms
+2026-11-17 01:27:57   prefix 327680: 37.5 s, prompt 327681, cached 262144, gpu 65, 2184, 46.34
+2026-11-17 01:29:05   prefix 393216: 38.0 s, prompt 393217, cached 327680, gpu 67, 2184, 46.90
+2026-11-17 01:30:14   prefix 458752: 38.4 s, prompt 458753, cached 393216, gpu 68, 2184, 46.80
+2026-11-17 01:31:22   prefix 524288: 38.8 s, prompt 524289, cached 458752, gpu 69, 2184, 45.92
+2026-11-17 01:32:32   prefix 589824: 39.2 s, prompt 589825, cached 524288, gpu 69, 2184, 47.21
+2026-11-17 01:33:41   prefix 655360: 39.5 s, prompt 655361, cached 589824, gpu 70, 2184, 48.18
+2026-11-17 01:34:51   prefix 720896: 39.8 s, prompt 720897, cached 655360, gpu 69, 2184, 48.46
+2026-11-17 01:36:01   prefix 786432: 40.2 s, prompt 786433, cached 720896, gpu 70, 2184, 48.95
+2026-11-17 01:37:11   prefix 851968: 40.0 s, prompt 851969, cached 786432, gpu 69, 2184, 49.64
+2026-11-17 01:38:22   prefix 917504: 40.4 s, prompt 917505, cached 851968, gpu 69, 2184, 49.12
+2026-11-17 01:39:33   prefix 983040: 41.0 s, prompt 983041, cached 917504, gpu 70, 2184, 48.80
+2026-11-17 01:40:39   prefix 1040384: 36.4 s, prompt 1040385, cached 983040, gpu 72, 2184, 49.51
+2026-11-17 01:41:17   1040384 x1 rep 1: round 30.534 ms p95 31.391 (gaps 255, window 7.8 s), ttft max 0.206 s, cached [1040384], chunks a token 1.00, replies 1, gpu 55, 2190, 9.30
+2026-11-17 01:41:35   1040384 x1 rep 2: round 30.577 ms p95 31.336 (gaps 255, window 7.8 s), ttft max 0.205 s, cached [1040384], chunks a token 1.00, replies 1, gpu 55, 2190, 9.24
+2026-11-17 01:41:54   1040384 x1 rep 3: round 30.518 ms p95 31.431 (gaps 255, window 7.8 s), ttft max 0.212 s, cached [1040384], chunks a token 1.00, replies 1, gpu 54, 2190, 9.22
+2026-11-17 01:42:04   cell 1040384 x1: 30.534 ms
+2026-11-17 01:42:51   1040384 x4 rep 1: round 62.779 ms p95 64.213 (gaps 994, window 15.7 s), ttft max 0.886 s, cached [1040384, 1040384, 1040384, 1040384], chunks a token 1.00, replies 4, gpu 52, 2190, 8.97
+2026-11-17 01:43:18   1040384 x4 rep 2: round 62.588 ms p95 63.898 (gaps 994, window 15.6 s), ttft max 0.901 s, cached [1040384, 1040384, 1040384, 1040384], chunks a token 1.00, replies 4, gpu 53, 2190, 9.03
+2026-11-17 01:43:45   1040384 x4 rep 3: round 62.531 ms p95 63.889 (gaps 994, window 15.6 s), ttft max 0.890 s, cached [1040384, 1040384, 1040384, 1040384], chunks a token 1.00, replies 4, gpu 53, 2190, 9.05
+2026-11-17 01:43:55   cell 1040384 x4: 62.588 ms
+2026-11-17 01:44:52   1040384 x8 rep 1: round 99.278 ms p95 101.454 (gaps 1954, window 24.4 s), ttft max 1.774 s, cached [1040384, 1040384, 1040384, 1040384, 1040384, 1040384, 1040384, 1040384], chunks a token 1.00, replies 8, gpu 51, 2190, 8.91
+2026-11-17 01:45:29   1040384 x8 rep 2: round 99.066 ms p95 100.965 (gaps 1954, window 24.4 s), ttft max 1.765 s, cached [1040384, 1040384, 1040384, 1040384, 1040384, 1040384, 1040384, 1040384], chunks a token 1.00, replies 8, gpu 53, 2190, 9.09
+2026-11-17 01:46:06   1040384 x8 rep 3: round 99.201 ms p95 101.387 (gaps 1961, window 24.4 s), ttft max 1.773 s, cached [1040384, 1040384, 1040384, 1040384, 1040384, 1040384, 1040384, 1040384], chunks a token 1.00, replies 8, gpu 54, 2190, 9.18
+2026-11-17 01:46:16   cell 1040384 x8: 99.201 ms
+grid rxmb end
+2026-11-17 01:46:46 == rxhook rxmb drafted: m2draft 6be92c482124f5cc, 3 reps on the kept 1040384
+2026-11-17 01:46:57 == rxhook rxmb drafted rc=0

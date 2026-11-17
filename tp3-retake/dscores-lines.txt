@@ -1,0 +1,9 @@
+rf3gma: rank 0 0, rank 1 0, rank 2 0
+rf3gha: rank 0 0, rank 1 0, rank 2 0
+rf3gza: rank 0 1, rank 1 1, rank 2 1
+rf3gmb: rank 0 0, rank 1 0, rank 2 0
+rf3ghb: rank 0 0, rank 1 0, rank 2 0
+rf3gmc: rank 0 0, rank 1 0, rank 2 0
+rf3gzb: rank 0 1, rank 1 1, rank 2 1
+rf3ghc: rank 0 0, rank 1 0, rank 2 0
+rf3gmd: rank 0 0, rank 1 0, rank 2 0
