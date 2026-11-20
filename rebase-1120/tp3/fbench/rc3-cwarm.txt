@@ -1,0 +1,9 @@
+c2048    rows per arm 3, cached tokens [0, 0, 0]
+c8192    rows per arm 3, cached tokens [0, 6144, 6144]
+f9600a   rows per arm 3, cached tokens [0, 8192, 8192]
+f9600b   rows per arm 3, cached tokens [0, 8192, 8192]
+c32768   rows per arm 3, cached tokens [0, 30720, 30720]
+f38400a  rows per arm 3, cached tokens [0, 36864, 36864]
+f38400b  rows per arm 3, cached tokens [0, 36864, 36864]
+c65536   rows per arm 3, cached tokens [0, 63488, 63488]
+cwarm: states {'cold': 90, 'reused': 126}; 126 resumed rows, 0 differ from their cold row

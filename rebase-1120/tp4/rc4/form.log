@@ -1,0 +1,18 @@
+2026-11-20 20:37:29 rc4wh serving: drafts: MTP + copies
+2026-11-20 20:37:29 rc4wh want grid timed h50c66: glm: windows (timed): 25.01 ms at 1 row, 36.99 at 4, 102.87 at 32, a draft 1.32 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok
+2026-11-20 21:19:50 rc4wm serving: drafts: MTP + copies
+2026-11-20 21:19:50 rc4wm want grid timed mb0b17: glm: windows (timed): 24.99 ms at 1 row, 38.07 at 4, 103.20 at 32, a draft 1.32 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok
+2026-11-20 22:01:47 rc4ma serving: drafts: MTP + copies
+2026-11-20 22:01:47 rc4ma want grid kept mb0b17: glm: windows (kept): 24.99 ms at 1 row, 38.07 at 4, 103.20 at 32, a draft 1.32 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok
+2026-11-20 22:43:40 rc4ha serving: drafts: MTP + copies
+2026-11-20 22:43:40 rc4ha want grid kept h50c66: glm: windows (kept): 24.99 ms at 1 row, 38.07 at 4, 103.20 at 32, a draft 1.32 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok
+2026-11-20 23:25:34 rc4mb serving: drafts: MTP + copies
+2026-11-20 23:25:34 rc4mb want grid kept mb0b17: glm: windows (kept): 24.99 ms at 1 row, 38.07 at 4, 103.20 at 32, a draft 1.32 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok
+2026-11-21 00:07:26 rc4hb serving: drafts: MTP + copies
+2026-11-21 00:07:26 rc4hb want grid kept h50c66: glm: windows (kept): 24.99 ms at 1 row, 38.07 at 4, 103.20 at 32, a draft 1.32 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok
+2026-11-21 00:49:19 rc4mc serving: drafts: MTP + copies
+2026-11-21 00:49:19 rc4mc want grid kept mb0b17: glm: windows (kept): 24.99 ms at 1 row, 38.07 at 4, 103.20 at 32, a draft 1.32 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok
+2026-11-21 01:31:13 rc4hc serving: drafts: MTP + copies
+2026-11-21 01:31:13 rc4hc want grid kept h50c66: glm: windows (kept): 24.99 ms at 1 row, 38.07 at 4, 103.20 at 32, a draft 1.32 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok
+2026-11-21 02:13:10 rc4md serving: drafts: MTP + copies
+2026-11-21 02:13:10 rc4md want grid kept mb0b17: glm: windows (kept): 24.99 ms at 1 row, 38.07 at 4, 103.20 at 32, a draft 1.32 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok

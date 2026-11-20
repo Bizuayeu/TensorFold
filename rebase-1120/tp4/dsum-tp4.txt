@@ -1,0 +1,14 @@
+rc4ma    main                tok/s 151.07 151.34 151.24  rounds 32,32,32  drafted 508,508,508  accepted 480,480,480  token_sha d50ec7cb16f5
+rc4ha    head                tok/s 171.63 171.55 172.17  rounds 32,32,32  drafted 508,508,508  accepted 480,480,480  token_sha d50ec7cb16f5
+rc4mb    main                tok/s 152.81 151.51 151.12  rounds 32,32,32  drafted 507,508,508  accepted 479,480,480  token_sha d50ec7cb16f5
+rc4hb    head                tok/s 172.12 171.49 171.55  rounds 32,32,32  drafted 508,508,508  accepted 480,480,480  token_sha d50ec7cb16f5
+rc4mc    main                tok/s 151.75 151.11 151.20  rounds 32,32,32  drafted 508,508,508  accepted 480,480,480  token_sha d50ec7cb16f5
+rc4hc    head                tok/s 171.62 171.12 170.84  rounds 32,32,32  drafted 508,508,508  accepted 480,480,480  token_sha d50ec7cb16f5
+rc4md    main                tok/s 141.85 141.53 150.65  rounds 32,32,32  drafted 508,508,508  accepted 480,480,480  token_sha d50ec7cb16f5
+rc4wh    extra (tokens only) tok/s 173.16 172.29 165.35  rounds 32,32,32  drafted 508,508,508  accepted 480,480,480  token_sha d50ec7cb16f5
+rc4wm    extra (tokens only) tok/s 151.20 151.67 151.50  rounds 32,32,32  drafted 508,508,508  accepted 480,480,480  token_sha d50ec7cb16f5
+tokens: one token_sha over the 27 reps of 9 arms
+STOP drafts differ between the counted arms (the speeds do not compare):
+  rep 1: rc4ma 32/508/480, rc4ha 32/508/480, rc4mb 32/507/479, rc4hb 32/508/480, rc4mc 32/508/480, rc4hc 32/508/480, rc4md 32/508/480
+  rep 2: rc4ma 32/508/480, rc4ha 32/508/480, rc4mb 32/508/480, rc4hb 32/508/480, rc4mc 32/508/480, rc4hc 32/508/480, rc4md 32/508/480
+  rep 3: rc4ma 32/508/480, rc4ha 32/508/480, rc4mb 32/508/480, rc4hb 32/508/480, rc4mc 32/508/480, rc4hc 32/508/480, rc4md 32/508/480

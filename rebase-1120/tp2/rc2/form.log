@@ -1,0 +1,18 @@
+2026-11-21 02:55:21 rc2wh serving: drafts: MTP + copies
+2026-11-21 02:55:21 rc2wh want fbench timed h50c66: glm: windows (timed): 37.84 ms at 1 row, 60.15 at 4, 175.77 at 32, a draft 1.90 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok
+2026-11-21 03:10:54 rc2wm serving: drafts: MTP + copies
+2026-11-21 03:10:54 rc2wm want fbench timed mb0b17: glm: windows (timed): 38.08 ms at 1 row, 59.71 at 4, 175.57 at 32, a draft 1.89 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok
+2026-11-21 03:26:11 rc2ma serving: drafts: MTP + copies
+2026-11-21 03:26:11 rc2ma want fbench kept mb0b17: glm: windows (kept): 38.08 ms at 1 row, 59.71 at 4, 175.57 at 32, a draft 1.89 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok
+2026-11-21 03:41:24 rc2ha serving: drafts: MTP + copies
+2026-11-21 03:41:24 rc2ha want fbench kept h50c66: glm: windows (kept): 38.08 ms at 1 row, 59.71 at 4, 175.57 at 32, a draft 1.89 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok
+2026-11-21 03:56:35 rc2mb serving: drafts: MTP + copies
+2026-11-21 03:56:35 rc2mb want fbench kept mb0b17: glm: windows (kept): 38.08 ms at 1 row, 59.71 at 4, 175.57 at 32, a draft 1.89 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok
+2026-11-21 04:11:51 rc2hb serving: drafts: MTP + copies
+2026-11-21 04:11:51 rc2hb want fbench kept h50c66: glm: windows (kept): 38.08 ms at 1 row, 59.71 at 4, 175.57 at 32, a draft 1.89 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok
+2026-11-21 04:27:06 rc2mc serving: drafts: MTP + copies
+2026-11-21 04:27:06 rc2mc want fbench kept mb0b17: glm: windows (kept): 38.08 ms at 1 row, 59.71 at 4, 175.57 at 32, a draft 1.89 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok
+2026-11-21 04:42:22 rc2hc serving: drafts: MTP + copies
+2026-11-21 04:42:22 rc2hc want fbench kept h50c66: glm: windows (kept): 38.08 ms at 1 row, 59.71 at 4, 175.57 at 32, a draft 1.89 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok
+2026-11-21 04:57:36 rc2md serving: drafts: MTP + copies
+2026-11-21 04:57:36 rc2md want fbench kept mb0b17: glm: windows (kept): 38.08 ms at 1 row, 59.71 at 4, 175.57 at 32, a draft 1.89 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok

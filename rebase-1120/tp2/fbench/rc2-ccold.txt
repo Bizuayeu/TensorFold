@@ -1,0 +1,9 @@
+c2048    one hash dfb006a836117f69
+c8192    one hash d349819117782513
+f9600a   one hash e333aff722e9407a
+f9600b   one hash b34bc100aab52907
+c32768   one hash f92edb7ab9161c00
+f38400a  one hash accbaf3f846f527c
+f38400b  one hash c2a427333ad5ebef
+c65536   one hash b1c6d5b9016bbff0
+ccold: 8 of 8 cold prompts with one reply over 9 arms
