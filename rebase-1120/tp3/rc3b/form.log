@@ -1,0 +1,14 @@
+2026-11-20 10:07:36 rc3ma serving: drafts: MTP + copies
+2026-11-20 10:07:36 rc3ma want fbench kept mb0b17: glm: windows (kept): 28.81 ms at 1 row, 43.84 at 4, 129.58 at 32, a draft 1.48 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok
+2026-11-20 10:23:52 rc3ha serving: drafts: MTP + copies
+2026-11-20 10:23:52 rc3ha want fbench kept h50c66: glm: windows (kept): 28.81 ms at 1 row, 43.84 at 4, 129.58 at 32, a draft 1.48 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok
+2026-11-20 10:39:05 rc3mb serving: drafts: MTP + copies
+2026-11-20 10:39:05 rc3mb want fbench kept mb0b17: glm: windows (kept): 28.81 ms at 1 row, 43.84 at 4, 129.58 at 32, a draft 1.48 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok
+2026-11-20 10:54:19 rc3hb serving: drafts: MTP + copies
+2026-11-20 10:54:19 rc3hb want fbench kept h50c66: glm: windows (kept): 28.81 ms at 1 row, 43.84 at 4, 129.58 at 32, a draft 1.48 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok
+2026-11-20 11:10:34 rc3mc serving: drafts: MTP + copies
+2026-11-20 11:10:34 rc3mc want fbench kept mb0b17: glm: windows (kept): 28.81 ms at 1 row, 43.84 at 4, 129.58 at 32, a draft 1.48 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok
+2026-11-20 11:26:51 rc3hc serving: drafts: MTP + copies
+2026-11-20 11:26:51 rc3hc want fbench kept h50c66: glm: windows (kept): 28.81 ms at 1 row, 43.84 at 4, 129.58 at 32, a draft 1.48 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok
+2026-11-20 11:43:03 rc3md serving: drafts: MTP + copies
+2026-11-20 11:43:03 rc3md want fbench kept mb0b17: glm: windows (kept): 28.81 ms at 1 row, 43.84 at 4, 129.58 at 32, a draft 1.48 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok

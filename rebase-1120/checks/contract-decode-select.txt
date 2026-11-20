@@ -1,0 +1,11 @@
+N/A  cuda affine4 MLP128 replacement bits: cluster path needs sm_90 or newer, this GPU is sm_121
+N/A  cuda affine4 MLP128 FP64: cluster path needs sm_90 or newer, this GPU is sm_121
+PASS nonfinite cuda glm decode select tf_glm_dsel_scan tf_glm_dsel_merge: the stated rule holds: tf_glm_select_rows' bytes, and the host's picks: order keys descending, -0 as +0 and any NaN above +inf (the GPU's s + 0 gives its one positive NaN), ties to the lower pool, the K picks in pool order
+PASS repeat cuda glm decode select tf_glm_dsel_scan tf_glm_dsel_merge: five runs byte-identical (4096 bytes), inputs and guards untouched, no overlap
+PASS shapes cuda glm decode select tf_glm_dsel_scan tf_glm_dsel_merge: 9 shapes bit-equal to the kernel it replaces (worst 0.000 of the bound), 0 edges refused by the kernel
+N/A  sums cuda glm decode select tf_glm_dsel_scan tf_glm_dsel_merge: declares none sums
+FAIL shapes control: GLM decode select reads its bucket one span short: at 4x65536x512 its bytes differ from tf_glm_select_rows's from byte 4097
+CONTROL control: GLM decode select reads its bucket one span short: red at shapes, as planted
+PASS limits live sm_121 most shared bytes a block (opt-in): the driver says 101376, the table 101376
+PASS limits live sm_121 threads a block: the driver says 1024, the table 1024
+(filtered) SUMMARY 1 kernels: 1 pass gates 1-4, 0 fail, 0 known findings; 1 controls: 1 red as planted, 0 missed; 0 limit problems; gates 90 ms, limits 0 ms

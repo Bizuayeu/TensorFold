@@ -96,3 +96,30 @@ python3 tools/t0rounds.py tp3/logs rf3dma rf3eha rf3emb rf3ehb rf3emc           
 ```
 `fsum.py`'s rule: a row is slower when this head's mean loses more than main's range or 0.25%, whichever is larger,
 decided before the runs.
+
+## The head rebased onto #3776 (20 Nov): `rebase-1120/`
+
+This change's four commits rebased onto main `b0b17e8962`, which holds #3776 (GLM's decode kernels as dependent launches). Two lines conflicted: `cuda_index.zig`'s and `cuda_sparse.zig`'s launches of the index scores. Each keeps this change's arguments and branch, with #3776's `cuda_pdl.launch`. The head is `50c6634539`; its diff against main is this change's 11 files, +107 −17, as before. #3776 also changed `glm_index_scores.cuh`, the kernel this change sends decode windows to, so the receipts are taken again on this base. Binaries, by sha256 (first 16), each built for these runs with CUDA 13.3 (nvcc V13.3.73, sm_121) in an empty Zig global cache: main's native `b0ce25ed405cf91f`, this head's `769ddcafe922a2df`, and this head's `tf-cuda-test` `bda3b177050de28f`.
+
+- `checks/`:
+  - `rcgpu-run.log`, with `contract-*.txt` and `index.txt`: on a GB10, this head's `tf-cuda-test`. kernel-contract filtered to "decode scores" (1 pass, the planted control red), "tf_glm_index_scores" (2 pass) and "decode select" (1 pass, the planted control red). `glm-index-check` PASS: scores, pools and token lists byte-equal at 10 cases, tied scores through both selects, the decode select at 7 windows; 2 of the 7 decode windows take `glm_index_scores`.
+  - `build-*.log`, `pdl-loads-*.tail`: the two builds, and `zig build check-pdl-loads` (#3776's check that no global read comes before a dependent launch's wait) in each build's tree: 0 early reads in 201 functions of 9 images, main's and this head's.
+  - `sass-summary.txt`: `cuobjdump -sass` of the 157 fatbins found in both builds' caches, compared function by function: 2,089 functions, every one the same in both.
+  - `dscores10.log`: the gates in WSL (Ubuntu, x86_64), Zig 0.17.0. lean 168 on main and on this head, 0 new; `zig fmt --check`; `zig ast-check` of the 9 changed Zig files; `test-environment-host` 26/26, `test-glm-index-host` 14/14, `test-glm-index-emulate`, the GLM module 250/250, `test-glm-contract-host` 7/7, `test-kernel-contract` 257/257, `check-native-cuda-host`, `compile-cuda-tests`, `test-glm-pdl-scan` 3/3, `tools/test_pdl_early_loads.py` 17 OK. pytest: 650 passed, 89 skipped, 1 failed. The failure is `tools/zig/zig_cache_restat_test.py`, whose `zig build` timed out at 300 s; that file run alone fails on main's tree here too.
+  - `pr_check.txt`: `tools/pr_check.py --base b0b17e8962 --pr 3689`: 0 errors, lean 168 vs 168, 0 new, 1 warning (no Unreleased bullet naming this PR).
+- `tp3/`: main against this head at TP=3 on the release's settings (as `tp3/` above). Nine fresh starts, 60 s apart. First `rc3wh` (this head) and `rc3wm` (main), each timing its own window and draft prices, uncounted. Then `rc3ma`, `rc3ha`, `rc3mb`, `rc3hb`, `rc3mc`, `rc3hc`, `rc3md` (`m` main, `h` this head), counted, every one kept on main's record: `rc3b/seedpick.txt` names it, and main's record was copied over this head's key and read back by sha. The two timed starts named different expert forms (this head classic, main factored), a choice made at load time; the earlier sets saw the same split. It stopped the first chain (`rc3`) before its counted starts, and the second (`rc3b`) went on from the table the first left. fsum over the two timed starts found every cell, greedy row and cold prompt the same.
+  - `fbench/`: fbench's reports and lines. `rc3-fsum.*` over the seven counted runs (A main's four, B this head's three): 0 slower gate figures, 0 slower receipt figures, 0 exactness failures. `rc3-fsum-all.*` over all nine, the timed two included, for the tokens: 0 exactness failures.
+  - `ftable-tp3.md`: the pull request's tables, from `tools/ftable.py`.
+  - `logs/serve-r0-ARM.log`: rank 0's `[tensorfold]` lines and its price words.
+  - `rc3/`, `rc3b/`: the price words and the seed (`form.log`, `look.log`, `own-*`, `seedpick.txt`, `tables-*`).
+- `chains/`: the chains, hooks and scripts as they ran, masked as `chains/` above.
+- TP=2 and TP=4 on this head are next. Until they are added, `tp2/` and `tp4/` hold the earlier base's sets.
+
+To rerun the TP=3 tables, from this directory:
+
+```sh
+python3 tools/fsum.py rebase-1120/tp3/fbench rebase-1120/tp3/logs rc3ma,rc3mb,rc3mc,rc3md rc3ha,rc3hb,rc3hc --json /tmp/rc3-fsum.json
+python3 tools/ftable.py 3 /tmp/rc3-fsum.json    # rebase-1120/tp3/ftable-tp3.md
+```
+
+The text files under `rebase-1120/` other than JSON have LF line ends and no trailing spaces. The files added here (under `rebase-1120/`, and `tools/seedpick.py` as `../tools/seedpick.py`) changed by the masking, as they ran, by sha256: `chains/dscores10-wsl.sh` `2fc20ae5408d16a3ace0e238ca9621c7911aedfcb9c0d04bc45f107ea8611987`, `chains/fl10-build.sh` `4e2e6f7fd07c724c7909ae2e64e1d3445affca06a7833d4b7b680b6283fb5f85`, `chains/rc-gpu01.sh` `b592d693691a26d4e5f289c489e754be0e0080a544e55e62e0db350fd9934b72`, `chains/rc-sass.py` `65eb8aec6a590e07a8054ee851c211ee43e28e7d49ccf2298b936f7e5ef92181`, `chains/rc-sass.sh` `2db4f7f6170012a4dbd7cffe72f0bcd2f3a5905e3f7821a31302f428e3638600`, `chains/rc3-chain.sh` `3a2c25428ec6b9e0630dd2fc3d27fb47c8bbc7d38e85c9d5e0f7cc4e6e840fde`, `chains/rc3b-chain.sh` `25d96fc9231f8d514689f5f8122c4f408e734f4638c169bb5d2f5e85a67ea56d`, `chains/rc3bhook.sh` `ca0ef37de0efe33a4b52b827b41b4ebf400cfb6983dc0ff9a8460af2773599e1`, `chains/rc3hook.sh` `92845b79f330ebd72ef05d6d3fbcaa5ce84b909d1d62d0abf19010250bb6d7fe`, `checks/rcgpu-run.log` `6bde459c0d16285376de1209f824d32846521bf9812338cd887bc57a38731aad`, `tp3/rc3b/seedpick.txt` `cebe5786c5e98285f5c2c4881a830ba83d6183928d1f659faf5da5f10f043e20`, `../tools/seedpick.py` `d49b69227d35a0e1930b5b51d50ccb226d540a533ac426f72b412d945d9d93b2`.

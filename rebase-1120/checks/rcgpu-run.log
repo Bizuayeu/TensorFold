@@ -1,0 +1,13 @@
+2026-11-20 09:09:27 == rc-gpu begin
+2026-11-20 09:09:27   tf-cuda-test bda3b177050de28f
+2026-11-20 09:09:27   preflight 1 rc=0 {"preflight": "rcgpu", "host": "host01", "ready": true, "failed": [], "reasons": {}, "unverified": {"clock_cap": "直近の記録に負荷の行（util 50% 以上）が無い"}, "skipped": ["lock"], "values": {"clock_cap_service": "active", "clock_top_mhz": 312.0, "clock_rows": 2921, "busy_rows": 0, "telemetry_service": "active", "telemetry_age_s": 0.9, "acpi_max_c": 46.8, "gpu_c": 44.0, "compute_apps": 0, "mem_available_gib": 119.6, "cached_gib": 1.6, "gpu_free_gib": 118.0, "nic_probes": 1, "nic_hotplug_lines": 0, "containers": []}}
+2026-11-20 09:09:30   kernel-contract "decode scores" rc=0: (filtered) SUMMARY 1 kernels: 1 pass gates 1-4, 0 fail, 1 known findings; 1 controls: 1 red as planted, 0 missed; 0 limit problems; gates 2578 ms, limits 0 ms
+2026-11-20 09:09:30   "decode scores" controls: CONTROL control: GLM decode scores write one tile short: red at shapes, as planted
+2026-11-20 09:09:34   kernel-contract "tf_glm_index_scores" rc=0: (filtered) SUMMARY 2 kernels: 2 pass gates 1-4, 0 fail, 2 known findings; 0 controls: 0 red as planted, 0 missed; 0 limit problems; gates 3153 ms, limits 0 ms
+2026-11-20 09:09:34   "tf_glm_index_scores" controls:
+2026-11-20 09:09:34   kernel-contract "decode select" rc=0: (filtered) SUMMARY 1 kernels: 1 pass gates 1-4, 0 fail, 0 known findings; 1 controls: 1 red as planted, 0 missed; 0 limit problems; gates 90 ms, limits 0 ms
+2026-11-20 09:09:34   "decode select" controls: CONTROL control: GLM decode select reads its bucket one span short: red at shapes, as planted
+2026-11-20 09:09:42   glm-index-check rc=0: PASS glm-index-check: scores, pools and token lists byte-equal at 10 cases, tied scores through both selects; the decode select at 7 windows
+2026-11-20 09:09:42   decode scores on glm_index_scores: 2 of 7 windows
+2026-11-20 09:09:42   heat-cap lines during the run: 0
+2026-11-20 09:09:42 == rc-gpu finished

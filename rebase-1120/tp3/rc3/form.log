@@ -1,0 +1,4 @@
+2026-11-20 09:13:42 rc3wh serving: drafts: MTP + copies
+2026-11-20 09:13:42 rc3wh want fbench timed h50c66: glm: windows (timed): 29.49 ms at 1 row, 44.47 at 4, 129.97 at 32, a draft 1.49 ms; experts classic; dscores 0, not loaded 0, dsel 0 -> ok
+2026-11-20 09:29:12 rc3wm serving: drafts: MTP + copies
+2026-11-20 09:29:12 rc3wm want fbench timed mb0b17: glm: windows (timed): 28.81 ms at 1 row, 43.84 at 4, 129.58 at 32, a draft 1.48 ms; experts factored; dscores 0, not loaded 0, dsel 0 -> ok

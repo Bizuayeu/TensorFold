@@ -1,0 +1,8 @@
+2026-11-20 08:39:28 == tp4-build mb0b17 begin (b0b17e8962e9bb105dd5f026dbfcd66b872b6697)
+2026-11-20 08:44:39   binary: b0ce25ed405cf91f 116073768 bytes
+2026-11-20 08:52:36   tf-cuda-test: ddef002983e21f45 186363128 bytes
+2026-11-20 08:52:36   build-native-mb0b17.log: disabled 0, fallback 0, compile failed 0
+2026-11-20 08:52:36   build-cuda-tests-mb0b17.log: disabled 0, fallback 0, compile failed 0
+2026-11-20 08:53:42   check-pdl-loads:
+2026-11-20 08:53:42   build-pdl-loads-mb0b17.log: disabled 0, fallback 0, compile failed 0
+2026-11-20 08:53:42 == tp4-build mb0b17 finished

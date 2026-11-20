@@ -1,0 +1,17 @@
+N/A  cuda affine4 MLP128 replacement bits: cluster path needs sm_90 or newer, this GPU is sm_121
+N/A  cuda affine4 MLP128 FP64: cluster path needs sm_90 or newer, this GPU is sm_121
+FAIL nonfinite cuda glm tf_glm_index_scores on pages out of order: 1024 of 16384 outputs differ in class; first at 0: finite where float64 gives nan
+KNOWN nonfinite cuda glm tf_glm_index_scores on pages out of order: relu is fmaxf(x, 0), as Triton's tl.maximum: a NaN dot scores 0 where float64 keeps the NaN
+PASS repeat cuda glm tf_glm_index_scores on pages out of order: five runs byte-identical (65536 bytes), inputs and guards untouched, no overlap
+PASS shapes cuda glm tf_glm_index_scores on pages out of order: 2 shapes bit-equal to the kernel it replaces (worst 0.000 of the bound), 0 edges refused by the kernel
+PASS sums cuda glm tf_glm_index_scores on pages out of order: exact sums at k 128, where fp16 sums would miss by 4927x and bf16 by 58867x
+FAIL nonfinite cuda glm decode scores tf_glm_index_scores on pages out of order: 4092 of 32768 outputs differ in class; first at 0: finite where float64 gives nan
+KNOWN nonfinite cuda glm decode scores tf_glm_index_scores on pages out of order: relu is fmaxf(x, 0), as Triton's tl.maximum: a NaN dot scores 0 where float64 keeps the NaN
+PASS repeat cuda glm decode scores tf_glm_index_scores on pages out of order: five runs byte-identical (131072 bytes), inputs and guards untouched, no overlap
+PASS shapes cuda glm decode scores tf_glm_index_scores on pages out of order: 3 shapes bit-equal to the kernel it replaces (worst 0.000 of the bound), 0 edges refused by the kernel
+PASS sums cuda glm decode scores tf_glm_index_scores on pages out of order: exact sums at k 128, where fp16 sums would miss by 5231x and bf16 by 55666x
+PASS limits live sm_121 most shared bytes a block (opt-in): the driver says 101376, the table 101376
+PASS limits live sm_121 threads a block: the driver says 1024, the table 1024
+INFO limits live: images built by nvcc 13.3, checked against nvcc 13.3's records
+PASS limits live glm_index tf_glm_index_scores: 256 threads launched, the driver allows 256; 126 registers, 32768 + 0 shared bytes (recorded 126, 32768)
+(filtered) SUMMARY 2 kernels: 2 pass gates 1-4, 0 fail, 2 known findings; 0 controls: 0 red as planted, 0 missed; 0 limit problems; gates 3153 ms, limits 0 ms

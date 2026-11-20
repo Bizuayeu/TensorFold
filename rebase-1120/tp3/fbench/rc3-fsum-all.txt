@@ -1,0 +1,32 @@
+figure (gate: *)                             rc3wm      rc3ma      rc3mb      rc3mc      rc3md      rc3wh      rc3ha      rc3hb      rc3hc
+  cold 2048 s                                1.087      1.087      1.099      1.086      1.085      1.082      1.089      1.095      1.098  loss +0.21% range 1.27% within
+  cold 8192 s                                4.607      4.586      4.596      4.589      4.599      4.584      4.584      4.599      4.586  loss -0.16% range 0.47% within
+* cold 9600 s (mean of two)                  5.338      5.327      5.364      5.339      5.341      5.361      5.346      5.343      5.335  loss +0.08% range 0.69% within
+  cold 32768 s                              17.668     17.574     17.713     17.674     17.695     18.169     17.631     17.678     17.619  loss +0.62% range 0.79% open
+* cold 38400 s (mean of two)                20.673     20.587     20.747     20.692     20.676     21.121     20.657      20.68     20.618  loss +0.46% range 0.77% open
+  cold 65536 s                              35.249     35.077     35.344     35.222     35.238     35.747     35.198     35.239     35.111  loss +0.28% range 0.76% within
+  openai fibonacci-raw t=1.0 tok/s          51.311     50.819     52.107     51.256     52.016     51.715     52.086     50.259      51.01  loss +0.45% range 2.50% within
+  openai gpu-chat-no-think t=1.0 tok/s      47.916     46.236     46.526     46.829     47.353     47.709     46.974      47.02     47.762  loss -0.84% range 3.58% within
+  openai fibonacci-raw t=0.0 tok/s          64.185     62.266     62.253     62.695     64.173     63.599     62.217     63.804     63.297  loss -0.18% range 3.06% within
+  openai gpu-chat-no-think t=0.0 tok/s      51.903     51.544     51.537     52.341     51.532     51.191     52.166     51.672     52.234  loss -0.09% range 1.56% within
+* decode x1 per stream tok/s                  69.7       68.5       69.1       69.0       69.9       69.5       70.1       69.9       69.2  loss -0.63% range 2.02% within
+* decode x4 per stream tok/s                  24.8       24.6       24.8       24.6       24.9       24.2       24.7       24.8       24.8  loss +0.46% range 1.21% within
+* decode x4 aggregate tok/s                   91.3       92.3       91.2       90.6       92.2       89.3       92.0       91.2       92.3  loss +0.35% range 1.86% within
+* decode x8 per stream tok/s                  14.8       14.9       15.0       14.9       15.1       14.6       14.6       15.1       15.0  loss +0.77% range 2.01% within
+* decode x8 aggregate tok/s                   99.2       98.5      100.3      100.2      100.3       98.6       99.4      100.5      100.3  loss +0.00% range 1.81% within
+  edit x1 per stream tok/s                   159.5      159.5      157.5      157.2      157.5      156.2      161.7      157.5      157.3  loss +0.04% range 1.45% within
+  edit x4 per stream tok/s                    30.5       31.3       30.8       30.7       30.8       29.4       30.8       30.8       30.8  loss +1.20% range 2.60% open
+  edit x4 aggregate tok/s                    101.8      106.2      103.6      103.5      103.5       97.3      105.0      103.2      105.0  loss +1.06% range 4.24% within
+exactness: every cell, greedy row and cold prompt holds
+note: openai fibonacci-raw t=1.0: the arms' token_sha agree
+note: openai gpu-chat-no-think t=1.0: the arms' token_sha agree
+memory rc3wm    model 64.11 GiB, 8 streams, 4773 pages (29.71 GiB), 327 MiB fixed, 37.2 GiB left, kept 32, loaded in 57.2 s
+memory rc3ma    model 64.11 GiB, 8 streams, 4762 pages (29.65 GiB), 327 MiB fixed, 37.1 GiB left, kept 32, loaded in 45.8 s
+memory rc3mb    model 64.11 GiB, 8 streams, 4766 pages (29.67 GiB), 327 MiB fixed, 37.2 GiB left, kept 32, loaded in 46.2 s
+memory rc3mc    model 64.11 GiB, 8 streams, 4777 pages (29.74 GiB), 327 MiB fixed, 37.2 GiB left, kept 32, loaded in 46.2 s
+memory rc3md    model 64.11 GiB, 8 streams, 4768 pages (29.68 GiB), 327 MiB fixed, 37.2 GiB left, kept 32, loaded in 46.3 s
+memory rc3wh    model 64.11 GiB, 8 streams, 4753 pages (29.59 GiB), 327 MiB fixed, 37.1 GiB left, kept 32, loaded in 111.7 s
+memory rc3ha    model 64.11 GiB, 8 streams, 4758 pages (29.62 GiB), 327 MiB fixed, 37.1 GiB left, kept 32, loaded in 45.8 s
+memory rc3hb    model 64.11 GiB, 8 streams, 4774 pages (29.72 GiB), 327 MiB fixed, 37.2 GiB left, kept 32, loaded in 47.1 s
+memory rc3hc    model 64.11 GiB, 8 streams, 4774 pages (29.72 GiB), 327 MiB fixed, 37.2 GiB left, kept 32, loaded in 46.0 s
+fsum: 0 slower gate figures, 0 slower receipt figures, 0 exactness failures, 18 figures
