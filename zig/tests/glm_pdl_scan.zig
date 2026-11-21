@@ -12,7 +12,7 @@ const files = blk: {
 /// glm_mm's matmul bodies call mm_kernel, which loads weights, then waits (reviewed weight-first placement).
 const weight_first = "mm_kernel<";
 /// Kernels that write weights: they wait but let no dependent in early (qmmf and glm_mm read weights first).
-const writers = [_][]const u8{ "glm_mm_tile4", "glm_mm_tile6", "glm_mm_tile8", "glm_mm_tile16", "tf_glm_nvfp4_amax", "tf_glm_nvfp4_quantize", "tf_glm_quantize4" };
+const writers = [_][]const u8{ "glm_mm_tile4", "glm_mm_tile6", "glm_mm_tile8", "glm_mm_tile12", "glm_mm_tile16", "tf_glm_nvfp4_amax", "tf_glm_nvfp4_quantize", "tf_glm_quantize4" };
 
 const open_c = "/" ++ "*"; // a C block comment's ends, spelled apart
 const close_c = "*" ++ "/";

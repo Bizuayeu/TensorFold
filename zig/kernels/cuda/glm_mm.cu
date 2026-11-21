@@ -359,6 +359,7 @@ extern "C" __global__ void glm_mm_tile16(const __nv_bfloat16* __restrict__ src, 
 // bf16 rows [N][K] -> BITS 12's chunks, slots and raw blocks, a thread a column's 64 inputs; `count`: raw blocks taken
 extern "C" __global__ void glm_mm_tile12(const uint16_t* __restrict__ src, uint32_t* __restrict__ dst, uint16_t* __restrict__ slots,
                                          uint16_t* __restrict__ raw, int* count, int N, int K, int max_raw) {
+    glm_pdl::enter_weights();
     const int KG = K >> 6, N8 = N >> 3;
     const long long bi = (long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (bi >= (long long)N8 * KG * 8) return;

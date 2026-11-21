@@ -183,7 +183,7 @@ pub fn tile12(k: *const Kernels, s: cuda.Stream, src: u64, dst: u64, count: u64,
     a.add(@as(c_int, @intCast(n)));
     a.add(@as(c_int, @intCast(kk)));
     a.add(@as(c_int, @intCast(@min(raw_room, max_raw))));
-    try cuda.launch.launch(k.tile12, .{ .grid = .{ .x = @intCast((blocks + 255) / 256) }, .block = .{ .x = 256 } }, s, &a);
+    try cuda.launch.launch(k.tile12, .{ .grid = .{ .x = @intCast((blocks + 255) / 256) }, .block = .{ .x = 256 }, .pdl = k.pdl }, s, &a);
 }
 
 /// A row-major bf16 [n][k] linear at `src` tiled into `dst` (as many bytes).
