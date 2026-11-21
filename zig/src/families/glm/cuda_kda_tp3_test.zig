@@ -92,7 +92,7 @@ test "GLM uneven worlds: a padded KDA stack keeps the B16 kernels, staged on its
     d.api.cuLaunchKernel = Capture.launch;
     d.api.cuLaunchKernelEx = @import("cuda_pdl.zig").forwardEx(Capture.launch);
     const stream: cuda.Stream = .{ .d = &d, .handle = null };
-    var kernels: mm.Kernels = .{ .by_rows = @splat(function(&d, 1)), .prompt = function(&d, 2), .reduce = function(&d, 3), .pdl = false, .packed_rows = undefined, .tile = undefined, .tile_packed = undefined };
+    var kernels: mm.Kernels = .{ .by_rows = @splat(function(&d, 1)), .prompt = function(&d, 2), .reduce = function(&d, 3), .pdl = false, .packed_rows = undefined, .tile = undefined, .tile_packed = undefined, .prompt12 = undefined, .tile12 = undefined };
     var raw: glue.Kernels = undefined;
     raw.bmm_decode = function(&d, 4);
     raw.bmm_rows = function(&d, 5);
