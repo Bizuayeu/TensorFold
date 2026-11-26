@@ -1,4 +1,4 @@
-//! Host-only ERNIE 5.5 tests: config, names, prompts, tokenizer, MultiMax, key lists and mHC. No GPU.
+//! Host-only ERNIE 5.5 tests: config, names, prompts, tokenizer, MultiMax, DSA keys, key lists and mHC. No GPU.
 test {
     _ = @import("config.zig");
     _ = @import("config_test.zig");
@@ -11,4 +11,5 @@ test {
     _ = @import("multimax_test.zig");
     _ = @import("window_test.zig");
     _ = @import("mhc_test.zig");
+    _ = @import("key_test.zig");
 }
