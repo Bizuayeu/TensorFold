@@ -210,6 +210,8 @@ Each release's page on GitHub has its notes and measurements. See [the 1.0.0 rel
 - CUDA kernels: ERNIE 5.5's DSA indexer keys (`tf_ernie55_index_key`, in the `ernie5_5_index` image): k's LayerNorm with its weight and bias, then NeoX RoPE on the first 64 dims at the config's `rope_theta`, rounded once to bf16; under the kernel contract against the host's float64 keys; nothing launches it yet, so served output is unchanged (#5243, part of #4926).
 
 - CUDA kernels: ERNIE 5.5's mHC post side (`tf_ernie55_mhc_post`, in the `ernie5_5_mhc` image): a layer's output into its row's 4 streams, post times the output plus comb's mix of the streams, rounded to bf16 once; under the kernel contract against float64; nothing launches it yet, so served output is unchanged (#5311, part of #4926).
+
+- CUDA kernels: ERNIE 5.5's hc_head (`tf_ernie55_hc_head`, in the `ernie5_5_mhc` image): the last layer's 4 streams into one row, each weighted by the sigmoid of its scaled mix under the plain RMS, rounded to bf16 once; under the kernel contract against float64; nothing launches it yet, so served output is unchanged (#5318, part of #4926).
 - Inkling 2 Mini on Metal, M5: a register-tiled dense BF16 kernel computes the same rows in the same order, with tokens unchanged; on an M5 Ultra a 2K-token prompt fills 5.7-7.3% faster (#5201, refs #5191). Thanks to @gilby.
 
 - Inkling 2 Mini on Metal: 3:1 GQA decode and verify read each key/value head once for its three query heads, and multi-stream attention batches across shared descriptors, with tokens unchanged; on an M3 Ultra four-stream decode is 12-14% faster and a 2K-token prompt 6% faster (#5206, refs #5191). Thanks to @gilby.
