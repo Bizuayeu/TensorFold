@@ -4,6 +4,8 @@ Each release's page on GitHub has its notes and measurements. See [the 1.0.0 rel
 
 ## Unreleased
 
+- Server: a streamed chat, completion or Responses request with `return_progress: true` receives `tensorfold.progress` counts (prompt tokens done, total and cached) while its prompt pass runs, before the first token; off by default, and a stream without it is byte for byte what it was (#3216).
+
 - Docs: `docs/environment-names.md` lists `TF_Q27_FLAT_GLUE`, `TF_Q27_QK` and `TF_CUDA_PREFILL_TRACE`, so the environment-names check passes on main again (#5513).
 
 - Build: the module walker matches source paths with either slash, so native Windows builds give `cli.zig` its `flashnext_memory` import again and `compile-native-cuda-windows` builds (#5511).
