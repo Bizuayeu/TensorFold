@@ -282,6 +282,7 @@ fn run(gpu: check.Gpu, cmd: []const u8, rest: []const [:0]const u8) !void {
     if (std.mem.eql(u8, cmd, "ernie5_5-hca-attn")) return @import("contract_ernie5_5_hca_attn.zig").run(gpu);
     if (std.mem.eql(u8, cmd, "ernie5_5-vha")) return @import("contract_ernie5_5_vha.zig").run(gpu);
     if (std.mem.eql(u8, cmd, "ernie5_5-inv-rope")) return @import("contract_ernie5_5_inv_rope.zig").run(gpu);
+    if (std.mem.eql(u8, cmd, "ernie5_5-out-gate")) return @import("contract_ernie5_5_out_gate.zig").run(gpu);
     if (std.mem.eql(u8, cmd, "projection-f32")) return projection_f32_tests.run(gpu);
     if (std.mem.eql(u8, cmd, "mxfp8")) return mxfp8_tests.run(gpu);
     if (std.mem.eql(u8, cmd, "quant-ref")) return quant_ref_tests.run(gpu);

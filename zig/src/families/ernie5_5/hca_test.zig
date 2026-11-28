@@ -352,3 +352,12 @@ test "invCheck refuses more rows than the grid's i32" {
     try h.invCheck(std.math.maxInt(i32));
     try std.testing.expectError(error.HcaShape, h.invCheck(@as(usize, std.math.maxInt(i32)) + 1));
 }
+
+test "gateCheck refuses a count off a multiple of 8 and more 8-value threads than the grid's i32 of 256-thread blocks" {
+    try h.gateCheck(0);
+    try h.gateCheck(8192);
+    try std.testing.expectError(error.HcaShape, h.gateCheck(8188));
+    const most = @as(usize, std.math.maxInt(i32)) * 256 * 8;
+    try h.gateCheck(most);
+    try std.testing.expectError(error.HcaShape, h.gateCheck(most + 8));
+}

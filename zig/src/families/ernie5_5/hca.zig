@@ -79,6 +79,11 @@ pub fn invCheck(rows: usize) error{HcaShape}!void {
     if (rows > std.math.maxInt(i32)) return error.HcaShape;
 }
 
+/// The output gate's n values, 8 a thread in 256-thread blocks: a multiple of 8 whose grid fits i32.
+pub fn gateCheck(n: usize) error{HcaShape}!void {
+    if (n % 8 != 0 or n / 8 > @as(u64, std.math.maxInt(i32)) * 256) return error.HcaShape;
+}
+
 /// The attention's window: a query at position p sees tokens max(0, p - 127) .. p, its own included.
 pub const window = 128;
 

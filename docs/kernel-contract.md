@@ -772,6 +772,15 @@ at rows from position 126, position 0, a prompt chunk from 4,000, position 199,9
 1M context's last two positions; with no sums, gate 4 does not apply (`ernie5_5-inv-rope`; two controls: the pairs
 turned forward, and the next position's angle).
 
+CUDA also checks ERNIE 5.5's output gate (`ernie5_5/hca.cu`, `tf_ernie55_out_gate`), the input of HCA's and DSA's
+`wo_b`: each value z times the sigmoid of its gate logit g at torch's two roundings, the sigmoid computed in fp32 as
+`torch.sigmoid` does at bf16 (expf, the add, the division) and cast to bf16, then the product cast to bf16. Each output
+must be within the float64 bound of z sigmoid(g) (expf's 2 ulps, the add, the division and the sigmoid's rounding) and
+between torch's form at both ends of the fp32 sigmoid's error (core's `headGateRange`), at 1, 4 and 64 rows of HCA's
+8,192 values, 64 of DSA's 16,384, 4 of a TP=2 rank's 4,096, and widths around a block's 2,048; with no sums, gate 4
+does not apply (`ernie5_5-out-gate`; two controls: the sigmoid left in fp32 for the product, as core's `tf_gate_rows`
+has it, which only the ends catch, and the sigmoid of -g).
+
 CPU: Qwen3.5-2B's affine projection (4 bits, groups of 64, `cpu_kernels.zig`) at the widths the 2B calls it, one row
 to a 128-row prompt chunk, registered once for each chain count of its projection classes (16; 32 for the delta rule's
 a and b; 8 for the head), and its RMS norm over 2048-wide rows; each registration's runs take 1 to 8 threads in turn,

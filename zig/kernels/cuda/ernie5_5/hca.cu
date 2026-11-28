@@ -1,6 +1,7 @@
-// ERNIE 5.5's HCA: the compressor (128 tokens pooled, RMSNorm, GPT-J's rope), VHA's head mix and the inverse rope.
+// ERNIE 5.5's HCA: the compressor (128 tokens pooled, RMSNorm, GPT-J's rope), VHA, the inverse rope and the out gate.
 
 #include <cuda_bf16.h>
+#include "common/vec.cuh"
 
 namespace ernie55h {
 
@@ -132,6 +133,25 @@ __device__ __forceinline__ void turn_back(const __nv_bfloat16* __restrict__ x, c
     }
 }
 
+enum GateFault { gated, unrounded, flipped };
+
+// Values 8 i .. 8 i + 7: bf16(z bf16(1 / (1 + expf(-g)))), torch's sigmoid in fp32 (controls: s not rounded; expf(g)).
+template <GateFault F>
+__device__ __forceinline__ void out_gate(const __nv_bfloat16* __restrict__ z, const __nv_bfloat16* __restrict__ g,
+                                         __nv_bfloat16* __restrict__ out, long long n) {
+    const long long i = 8 * (static_cast<long long>(blockIdx.x) * blockDim.x + threadIdx.x);
+    if (i >= n) return;
+    float zv[8], gv[8];
+    tf_common::unpack8(*reinterpret_cast<const uint4*>(z + i), zv);
+    tf_common::unpack8(*reinterpret_cast<const uint4*>(g + i), gv);
+#pragma unroll
+    for (int k = 0; k < 8; ++k) {
+        const float s = __fdiv_rn(1.0f, __fadd_rn(1.0f, expf(F == flipped ? gv[k] : -gv[k])));
+        zv[k] = __fmul_rn(zv[k], F == unrounded ? s : __bfloat162float(__float2bfloat16_rn(s)));
+    }
+    *reinterpret_cast<uint4*>(out + i) = tf_common::pack8(zv);
+}
+
 }  // namespace ernie55h
 
 // 128-token blocks (kv then score, fp32, ts apart), ape, w, freq [32], row r at pos[0] + 128 r: bf16 rows os apart.
@@ -202,4 +222,25 @@ extern "C" __global__ void __launch_bounds__(256)
     tf_ctl_ernie55_inv_rope_next_position(const __nv_bfloat16* __restrict__ x, const float* __restrict__ freq,
                                           const int* __restrict__ pos, __nv_bfloat16* __restrict__ out) {
     ernie55h::turn_back<ernie55h::next_position>(x, freq, pos, out);
+}
+
+// n values of z and g (bf16, n % 8 == 0, 16-byte aligned): z times its sigmoid gate, into out, 8 a thread.
+extern "C" __global__ void __launch_bounds__(256)
+    tf_ernie55_out_gate(const __nv_bfloat16* __restrict__ z, const __nv_bfloat16* __restrict__ g,
+                        __nv_bfloat16* __restrict__ out, long long n) {
+    ernie55h::out_gate<ernie55h::gated>(z, g, out, n);
+}
+
+// The contract's planted control: the sigmoid left in fp32 for the product, as core's tf_gate_rows has it.
+extern "C" __global__ void __launch_bounds__(256)
+    tf_ctl_ernie55_out_gate_unrounded(const __nv_bfloat16* __restrict__ z, const __nv_bfloat16* __restrict__ g,
+                                      __nv_bfloat16* __restrict__ out, long long n) {
+    ernie55h::out_gate<ernie55h::unrounded>(z, g, out, n);
+}
+
+// The contract's planted control: the sigmoid of -g, the gate's sign flipped.
+extern "C" __global__ void __launch_bounds__(256)
+    tf_ctl_ernie55_out_gate_flipped(const __nv_bfloat16* __restrict__ z, const __nv_bfloat16* __restrict__ g,
+                                    __nv_bfloat16* __restrict__ out, long long n) {
+    ernie55h::out_gate<ernie55h::flipped>(z, g, out, n);
 }

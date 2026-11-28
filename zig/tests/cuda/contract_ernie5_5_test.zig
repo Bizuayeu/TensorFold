@@ -7,4 +7,5 @@ test {
     _ = @import("contract_ernie5_5_hca_attn.zig");
     _ = @import("contract_ernie5_5_vha.zig");
     _ = @import("contract_ernie5_5_inv_rope.zig");
+    _ = @import("contract_ernie5_5_out_gate.zig");
 }

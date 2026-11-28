@@ -1,4 +1,4 @@
-//! ERNIE 5.5's HCA kernels: the compressor, VHA and the inverse rope (ernie5_5/hca.cu), the attention (hca_attn.cu).
+//! ERNIE 5.5's HCA kernels: compressor, VHA, inverse rope and output gate (ernie5_5/hca.cu), attention (hca_attn.cu).
 const cuda = @import("cuda");
 pub const hca = @import("hca.zig");
 
@@ -50,11 +50,12 @@ pub const Hca = struct {
     compress_fn: cuda.Function,
     vha_fn: cuda.Function,
     inv_fn: cuda.Function,
+    gate_fn: cuda.Function,
 
     pub fn load(d: *const cuda.Driver) !Hca {
         var mod = try cuda.Module.load(d, cuda.kernels.ernie5_5_hca);
         errdefer mod.unload();
-        return .{ .mod = mod, .compress_fn = try mod.function("tf_ernie55_hca_compress"), .vha_fn = try mod.function("tf_ernie55_vha"), .inv_fn = try mod.function("tf_ernie55_inv_rope") };
+        return .{ .mod = mod, .compress_fn = try mod.function("tf_ernie55_hca_compress"), .vha_fn = try mod.function("tf_ernie55_vha"), .inv_fn = try mod.function("tf_ernie55_inv_rope"), .gate_fn = try mod.function("tf_ernie55_out_gate") };
     }
 
     pub fn unload(x: *Hca) void {
@@ -74,6 +75,11 @@ pub const Hca = struct {
     /// rows tokens of 64 heads (bf16 [rows][64][512], row r at pos[0] + r), freq [32]: bf16 out (hca.turnBack).
     pub fn invRope(x: *const Hca, s: cuda.Stream, in: u64, freq: u64, pos: u64, out: u64, rows: usize) !void {
         try invRopeWith(x.inv_fn, s, in, freq, pos, out, rows);
+    }
+
+    /// n bf16 values of z and its gate logits g (n % 8 == 0): bf16(z bf16(sigmoid(g))) into out, HCA's and DSA's.
+    pub fn outGate(x: *const Hca, s: cuda.Stream, z: u64, g: u64, out: u64, n: usize) !void {
+        try outGateWith(x.gate_fn, s, z, g, out, n);
     }
 };
 
@@ -109,4 +115,14 @@ pub fn invRopeWith(f: cuda.Function, s: cuda.Stream, in: u64, freq: u64, pos: u6
     var a: cuda.Args = .{};
     inline for (.{ in, freq, pos, out }) |p| a.add(p);
     try cuda.launch.launch(f, .{ .grid = .{ .x = @intCast(rows) }, .block = .{ .x = threads } }, s, &a);
+}
+
+/// `f`, tf_ernie55_out_gate or an entry of the image with its arguments, 8 values a thread.
+pub fn outGateWith(f: cuda.Function, s: cuda.Stream, z: u64, g: u64, out: u64, n: usize) !void {
+    try hca.gateCheck(n);
+    if (n == 0) return;
+    var a: cuda.Args = .{};
+    inline for (.{ z, g, out }) |p| a.add(p);
+    a.add(@as(i64, @intCast(n)));
+    try cuda.launch.launch(f, .{ .grid = .{ .x = @intCast((n / 8 + threads - 1) / threads) }, .block = .{ .x = threads } }, s, &a);
 }
