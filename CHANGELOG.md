@@ -6,6 +6,8 @@ Each release's page on GitHub has its notes and measurements. See [the 1.0.0 rel
 
 - Qwen3.5 and Qwen3.8 (including the 27B) on CUDA: a full load now refuses a checkpoint with tensors the engine never binds, naming the first five; MTP, vision and tied-head tensors are scoped so they never count (#4577).
 
+
+
 - Server: `--confidential` refuses existing Linux tracers and, where whole-process locking is supported, locks current and future process memory against swap or refuses startup; Darwin currently refuses because this locking is unavailable.
 
 - HIP, Qwen 3.5 and Nemotron on one GPU: long prompt chunks keep the next layer queued while they poll for a cancel, rather than draining the GPU at every layer; tokens unchanged, and a cancel still drains before the pass ends (#4887).
