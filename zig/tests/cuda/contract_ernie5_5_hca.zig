@@ -314,5 +314,6 @@ test "the HCA rope's YaRN: pairs 0-15 at theta's own frequencies, 25-31 at a six
         const want: ?f64 = if (l <= 15) own else if (l >= 25) own / factor else null;
         if (want) |v| try std.testing.expectApproxEqRel(v, f, 1e-6);
     }
-    try std.testing.expect(fr[20] < std.math.pow(f64, theta, -40.0 / hh.rope) and fr[20] > std.math.pow(f64, theta, -40.0 / hh.rope) / factor);
+    const own20 = std.math.pow(f64, theta, -40.0 / @as(f64, hh.rope));
+    try std.testing.expect(fr[20] < own20 and fr[20] > own20 / factor);
 }
