@@ -4,6 +4,8 @@ Each release's page on GitHub has its notes and measurements. See [the 1.0.0 rel
 
 ## Unreleased
 
+- DeepSeek-V4.1 on CUDA: with slot drafts, every pass's DSpark statics staging region starts int64-aligned, so 13 or 14 live requests at 16 slots no longer stop both ranks with `incorrect alignment`; with 12 or fewer live requests nothing moves (#3446). Thanks to @jayleaton.
+
 - CUDA kernels: ERNIE 5.5's DSA key lists (`tf_ernie55_window_merge`, in a new `ernie5_5_index` image): each row's indexer top-k picks, then its 128-position sliding window, with the row's count, as the sparse MLA reads them; under the kernel contract against the host's lists; nothing launches it yet, so served output is unchanged (#5211, part of #4926).
 
 - DeepSeek-V4.1 on CUDA: `tf-dsv41 follow` and `tf-dsv41 generate` catch SIGTERM and SIGINT once the model has loaded and take the fail-fast path, so the stopped rank aborts its own collectives, every rank gets the reason and exits with code 70; a second stop signal takes the default action (#3232).
