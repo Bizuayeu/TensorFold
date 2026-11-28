@@ -4,6 +4,8 @@ Each release's page on GitHub has its notes and measurements. See [the 1.0.0 rel
 
 ## Unreleased
 
+- DeepSeek V4.1 on CUDA: in replay prefill, the decoder pass's mHC boundaries over a short tail (16 rows or fewer) write the second streams buffer instead of the streams in place, so a short prompt's reply no longer depends on which kernel block runs first; longer tails take the same path as before (#3630, refs #2715).
+
 - Server: a streamed chat, completion or Responses request with `return_progress: true` receives `tensorfold.progress` counts (prompt tokens done, total and cached) while its prompt pass runs, before the first token; off by default, and a stream without it is byte for byte what it was (#3216).
 
 - Docs: `docs/environment-names.md` lists `TF_Q27_FLAT_GLUE`, `TF_Q27_QK` and `TF_CUDA_PREFILL_TRACE`, so the environment-names check passes on main again (#5513).
