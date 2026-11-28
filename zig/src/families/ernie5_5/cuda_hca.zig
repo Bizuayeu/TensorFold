@@ -1,4 +1,4 @@
-//! ERNIE 5.5's HCA kernels: the C128 compressor and VHA (ernie5_5/hca.cu), the attention's chunk tiles (hca_attn.cu).
+//! ERNIE 5.5's HCA kernels: the compressor, VHA and the inverse rope (ernie5_5/hca.cu), the attention (hca_attn.cu).
 const cuda = @import("cuda");
 pub const hca = @import("hca.zig");
 
@@ -49,11 +49,12 @@ pub const Hca = struct {
     mod: cuda.Module,
     compress_fn: cuda.Function,
     vha_fn: cuda.Function,
+    inv_fn: cuda.Function,
 
     pub fn load(d: *const cuda.Driver) !Hca {
         var mod = try cuda.Module.load(d, cuda.kernels.ernie5_5_hca);
         errdefer mod.unload();
-        return .{ .mod = mod, .compress_fn = try mod.function("tf_ernie55_hca_compress"), .vha_fn = try mod.function("tf_ernie55_vha") };
+        return .{ .mod = mod, .compress_fn = try mod.function("tf_ernie55_hca_compress"), .vha_fn = try mod.function("tf_ernie55_vha"), .inv_fn = try mod.function("tf_ernie55_inv_rope") };
     }
 
     pub fn unload(x: *Hca) void {
@@ -68,6 +69,11 @@ pub const Hca = struct {
     /// rows tokens of 64 heads at d dims (bf16 [rows][64][d]) mixed by U and V (bf16 [64][16]): bf16 out (hca.vha).
     pub fn vha(x: *const Hca, s: cuda.Stream, o: u64, u: u64, v: u64, out: u64, rows: usize, d: usize) !void {
         try vhaWith(x.vha_fn, s, o, u, v, out, rows, d);
+    }
+
+    /// rows tokens of 64 heads (bf16 [rows][64][512], row r at pos[0] + r), freq [32]: bf16 out (hca.turnBack).
+    pub fn invRope(x: *const Hca, s: cuda.Stream, in: u64, freq: u64, pos: u64, out: u64, rows: usize) !void {
+        try invRopeWith(x.inv_fn, s, in, freq, pos, out, rows);
     }
 };
 
@@ -94,4 +100,13 @@ pub fn vhaWith(f: cuda.Function, s: cuda.Stream, o: u64, u: u64, v: u64, out: u6
     a.add(@as(i64, @intCast(cols)));
     a.add(@as(c_int, @intCast(d)));
     try cuda.launch.launch(f, .{ .grid = .{ .x = @intCast((cols + threads - 1) / threads) }, .block = .{ .x = threads } }, s, &a);
+}
+
+/// `f`, tf_ernie55_inv_rope or an entry of the image with its arguments, a token a block.
+pub fn invRopeWith(f: cuda.Function, s: cuda.Stream, in: u64, freq: u64, pos: u64, out: u64, rows: usize) !void {
+    try hca.invCheck(rows);
+    if (rows == 0) return;
+    var a: cuda.Args = .{};
+    inline for (.{ in, freq, pos, out }) |p| a.add(p);
+    try cuda.launch.launch(f, .{ .grid = .{ .x = @intCast(rows) }, .block = .{ .x = threads } }, s, &a);
 }

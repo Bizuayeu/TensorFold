@@ -301,3 +301,54 @@ test "vhaCheck refuses a width of 0 or past i32, columns past the grid of 256-th
     try std.testing.expectError(no, h.vhaCheck(@as(usize, std.math.maxInt(i32)) / 2 + 1, 512));
     try std.testing.expectError(no, h.vhaCheck(std.math.maxInt(usize), 2));
 }
+
+fn hcaFreq() [h.rope / 2]f32 {
+    var freq: [h.rope / 2]f32 = undefined;
+    for (&freq, 0..) |*f, l| f.* = @floatCast(std.math.pow(f64, 160000, -@as(f64, @floatFromInt(2 * l)) / h.rope));
+    return freq;
+}
+
+test "the inverse rope is vLLM's: x_e cos + x_o sin, x_o cos - x_e sin on dims 448..511, the nope dims kept" {
+    const freq = hcaFreq();
+    var prng = std.Random.DefaultPrng.init(0x696e76);
+    const rng = prng.random();
+    for ([_]i64{ 0, 127, 4000, 199_999, (1 << 20) - 1 }) |p| {
+        var x: [h.head_dim]f64 = undefined;
+        for (&x) |*v| v.* = rng.float(f64) * 2 - 1;
+        var got = x;
+        h.turnBack(&got, &freq, p);
+        try std.testing.expectEqualSlices(f64, x[0..h.nope], got[0..h.nope]);
+        for (0..h.rope / 2) |l| {
+            const ang: f64 = freq[l] * @as(f32, @floatFromInt(p));
+            const e = x[h.nope + 2 * l];
+            const o = x[h.nope + 2 * l + 1];
+            try std.testing.expectEqual(e * @cos(ang) + o * @sin(ang), got[h.nope + 2 * l]);
+            try std.testing.expectEqual(o * @cos(ang) - e * @sin(ang), got[h.nope + 2 * l + 1]);
+        }
+    }
+}
+
+test "the inverse rope undoes the rope at the same position, and is the identity at position 0" {
+    const freq = hcaFreq();
+    var prng = std.Random.DefaultPrng.init(0x6261636b);
+    const rng = prng.random();
+    for ([_]i64{ 0, 126, 128 * 4321, (1 << 20) - 1 }) |p| {
+        var x: [h.head_dim]f64 = undefined;
+        for (&x) |*v| v.* = rng.float(f64) * 2 - 1;
+        var y = x;
+        h.turn(&y, &freq, p);
+        h.turnBack(&y, &freq, p);
+        for (y, x) |g, v| try std.testing.expectApproxEqAbs(v, g, 1e-12);
+        var z = x;
+        h.turnBack(&z, &freq, p);
+        var moved: f64 = 0;
+        for (z[h.nope..], x[h.nope..]) |g, v| moved = @max(moved, @abs(g - v));
+        if (p == 0) try std.testing.expectEqual(@as(f64, 0), moved) else try std.testing.expect(moved > 1e-3);
+    }
+}
+
+test "invCheck refuses more rows than the grid's i32" {
+    try h.invCheck(0);
+    try h.invCheck(std.math.maxInt(i32));
+    try std.testing.expectError(error.HcaShape, h.invCheck(@as(usize, std.math.maxInt(i32)) + 1));
+}

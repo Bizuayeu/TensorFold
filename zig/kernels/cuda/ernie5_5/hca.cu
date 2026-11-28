@@ -1,4 +1,4 @@
-// ERNIE 5.5's HCA: the compressor (a block's 128 tokens pooled per channel, RMSNorm, GPT-J's rope) and VHA's head mix.
+// ERNIE 5.5's HCA: the compressor (128 tokens pooled, RMSNorm, GPT-J's rope), VHA's head mix and the inverse rope.
 
 #include <cuda_bf16.h>
 
@@ -103,6 +103,35 @@ __device__ __forceinline__ void vha(const __nv_bfloat16* __restrict__ o, const _
     }
 }
 
+enum TurnFault { back, forward, next_position };
+
+// Row blockIdx.x at pos[0] + row, thread t's dims 2t, 2t + 1 of its 64 heads: pair t - 224 turned back, bf16 once.
+template <TurnFault F>
+__device__ __forceinline__ void turn_back(const __nv_bfloat16* __restrict__ x, const float* __restrict__ freq,
+                                          const int* __restrict__ pos, __nv_bfloat16* __restrict__ out) {
+    const long long row = blockIdx.x;
+    const int t = threadIdx.x;
+    const bool rope = 2 * t >= NOPE;
+    float sn = 0.0f, cs = 1.0f;
+    if (rope) {
+        const long long at = static_cast<long long>(pos[0]) + row + (F == next_position ? 1 : 0);
+        turn(__fmul_rn(freq[t - NOPE / 2], static_cast<float>(at)), &sn, &cs);
+    }
+    for (int h = 0; h < VH; ++h) {
+        const long long at = (row * VH + h) * H + 2 * t;
+        const __nv_bfloat162 v = *reinterpret_cast<const __nv_bfloat162*>(x + at);
+        if (!rope) {
+            *reinterpret_cast<__nv_bfloat162*>(out + at) = v;
+            continue;
+        }
+        const float x0 = __bfloat162float(v.x), x1 = __bfloat162float(v.y);
+        const float c0 = __fmul_rn(x0, cs), s1 = __fmul_rn(x1, sn), c1 = __fmul_rn(x1, cs), s0 = __fmul_rn(x0, sn);
+        const float y0 = F == forward ? __fsub_rn(c0, s1) : __fadd_rn(c0, s1);
+        const float y1 = F == forward ? __fadd_rn(c1, s0) : __fsub_rn(c1, s0);
+        *reinterpret_cast<__nv_bfloat162*>(out + at) = __floats2bfloat162_rn(y0, y1);
+    }
+}
+
 }  // namespace ernie55h
 
 // 128-token blocks (kv then score, fp32, ts apart), ape, w, freq [32], row r at pos[0] + 128 r: bf16 rows os apart.
@@ -152,4 +181,25 @@ extern "C" __global__ void __launch_bounds__(256)
                                   const __nv_bfloat16* __restrict__ v, __nv_bfloat16* __restrict__ out,
                                   long long cols, int d) {
     ernie55h::vha<ernie55h::transposed>(o, u, v, out, cols, d);
+}
+
+// Rows of 64 heads (bf16 [rows][64][512], row r at pos[0] + r), freq [32]: the rope dims turned back, into out (not x).
+extern "C" __global__ void __launch_bounds__(256)
+    tf_ernie55_inv_rope(const __nv_bfloat16* __restrict__ x, const float* __restrict__ freq,
+                        const int* __restrict__ pos, __nv_bfloat16* __restrict__ out) {
+    ernie55h::turn_back<ernie55h::back>(x, freq, pos, out);
+}
+
+// The contract's planted control: the pairs turned forward, the q's rope again in place of its inverse.
+extern "C" __global__ void __launch_bounds__(256)
+    tf_ctl_ernie55_inv_rope_forward(const __nv_bfloat16* __restrict__ x, const float* __restrict__ freq,
+                                    const int* __restrict__ pos, __nv_bfloat16* __restrict__ out) {
+    ernie55h::turn_back<ernie55h::forward>(x, freq, pos, out);
+}
+
+// The contract's planted control: each row turned back by the next position's angle.
+extern "C" __global__ void __launch_bounds__(256)
+    tf_ctl_ernie55_inv_rope_next_position(const __nv_bfloat16* __restrict__ x, const float* __restrict__ freq,
+                                          const int* __restrict__ pos, __nv_bfloat16* __restrict__ out) {
+    ernie55h::turn_back<ernie55h::next_position>(x, freq, pos, out);
 }

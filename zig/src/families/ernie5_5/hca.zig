@@ -61,6 +61,24 @@ pub fn turn(out: *[head_dim]f64, freq: *const [rope / 2]f32, pos: i64) void {
     }
 }
 
+/// The attention output's inverse rope (vLLM's): GPT-J's pairs turned back by angle(freq[l], pos), the nope dims kept.
+pub fn turnBack(out: *[head_dim]f64, freq: *const [rope / 2]f32, pos: i64) void {
+    for (freq, 0..) |f, l| {
+        const a = angle(f, pos);
+        const c = @cos(a);
+        const s = @sin(a);
+        const x0 = out[nope + 2 * l];
+        const x1 = out[nope + 2 * l + 1];
+        out[nope + 2 * l] = x0 * c + x1 * s;
+        out[nope + 2 * l + 1] = x1 * c - x0 * s;
+    }
+}
+
+/// rows tokens of 64 heads, a 256-thread block each: rows that fit the grid (the offsets then stay in i64).
+pub fn invCheck(rows: usize) error{HcaShape}!void {
+    if (rows > std.math.maxInt(i32)) return error.HcaShape;
+}
+
 /// The attention's window: a query at position p sees tokens max(0, p - 127) .. p, its own included.
 pub const window = 128;
 

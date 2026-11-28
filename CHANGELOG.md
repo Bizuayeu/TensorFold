@@ -52,6 +52,7 @@ Each release's page on GitHub has its notes and measurements. See [the 1.0.0 rel
 
 - CUDA kernels: ERNIE 5.5's VHA (`tf_ernie55_vha`, in the `ernie5_5_hca` image): the attention output's 64 heads at each dim mixed as o + V (U^T o) at rank 16, z = U^T o and V z summed in fp32 and o added before the one bf16 rounding (vLLM's VHAPostMix as it runs at TP > 1, here at one rank too); under the kernel contract against float64; nothing launches it yet, so served output is unchanged (#5508, part of #4926).
 - Developers: `test-ernie5_5-contract-host` builds ERNIE 5.5's contract files' own tests over the CUDA runner's modules and runs under `test-cuda-host`, so CI runs their 20 tests; the HCA compressor contract's YaRN test, which did not compile, divides as f64, with the same value and bounds (#5508, part of #4926).
+- CUDA kernels: ERNIE 5.5's inverse rope on the attention output (`tf_ernie55_inv_rope`, in the `ernie5_5_hca` image): each head's rope dims 448..511 turned back as GPT-J's pairs at the row's position with the HCA rope's YaRN frequencies, each step rounded in fp32 and the output to bf16 once; under the kernel contract against float64; nothing launches it yet, so served output is unchanged (#5536, part of #4926).
 
 - Inkling 2 Mini on Metal, M5: a register-tiled dense BF16 kernel computes the same rows in the same order, with tokens unchanged; on an M5 Ultra a 2K-token prompt fills 5.7-7.3% faster (#5201, refs #5191). Thanks to @gilby.
 

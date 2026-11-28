@@ -763,6 +763,15 @@ widths at and around a block of 256 threads; gate 4 sets U to 1 and V to 1/16, w
 three heads and 1/4 at the rest, so z is 39.25 and its sums exact, where bf16's lose the 24 to 2^20 and fp16's overflow
 (`ernie5_5-vha`; two controls: o left out, and U and V read rank-major).
 
+CUDA also checks ERNIE 5.5's inverse rope on the attention output (`ernie5_5/hca.cu`, `tf_ernie55_inv_rope`): each of a
+token's 64 heads with its rope dims 448..511 turned back as GPT-J's pairs at the row's position (the HCA rope's YaRN
+frequencies, the angle their fp32 product with the position), x_e c + x_o s and x_o c - x_e s with each step rounded,
+then bf16, the nope dims copied. Each output must be within the float64 bound of the host's (`ernie5_5/hca.zig`, whose
+host test holds it to vLLM's inverse rope and to the rope undone), sincosf's 2 ulp and the steps 8 units of the terms,
+at rows from position 126, position 0, a prompt chunk from 4,000, position 199,999 (past sincosf's fast range) and the
+1M context's last two positions; with no sums, gate 4 does not apply (`ernie5_5-inv-rope`; two controls: the pairs
+turned forward, and the next position's angle).
+
 CPU: Qwen3.5-2B's affine projection (4 bits, groups of 64, `cpu_kernels.zig`) at the widths the 2B calls it, one row
 to a 128-row prompt chunk, registered once for each chain count of its projection classes (16; 32 for the delta rule's
 a and b; 8 for the head), and its RMS norm over 2048-wide rows; each registration's runs take 1 to 8 threads in turn,
