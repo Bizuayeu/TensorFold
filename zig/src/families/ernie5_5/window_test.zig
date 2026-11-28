@@ -13,6 +13,7 @@ fn vendor(topk: []const i32, k: usize, window: usize, seq: i64, col: usize) i32 
 
 fn run(a: std.mem.Allocator, sh: win.Shape, pos0: i64, picks: []const i32, picked: []const i32) !struct { []i32, []i32 } {
     const tok = try a.alloc(i32, sh.rows * sh.w);
+    errdefer a.free(tok);
     const cnt = try a.alloc(i32, sh.rows);
     win.merge(sh, picks, picked, pos0, tok, cnt);
     return .{ tok, cnt };
